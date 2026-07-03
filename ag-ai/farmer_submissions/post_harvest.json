@@ -1,0 +1,71 @@
+[
+  {
+    "farmer_id": null,
+    "crop": "Rice",
+    "region": "Oti",
+    "district": null,
+    "area_hectares": 2.0,
+    "actual_yield_kg": 6000.0,
+    "actual_yield_kg_per_ha": 3000.0,
+    "quality_score": null,
+    "notes": null,
+    "year": 2026,
+    "submitted_at": "2026-06-26T21:25:11.043113"
+  },
+  {
+    "farmer_id": null,
+    "crop": "Rice",
+    "region": "Oti",
+    "district": null,
+    "area_hectares": 2.0,
+    "actual_yield_kg": 6000.0,
+    "actual_yield_kg_per_ha": 3000.0,
+    "quality_score": null,
+    "notes": null,
+    "year": 2026,
+    "submitted_at": "2026-06-26T21:25:36.961064"
+  },
+  {
+    "farmer_id": "AGRI-1782169648088",
+    "crop": "Rice",
+    "region": "Bono",
+    "district": "Sunyani Municipal",
+    "area_hectares": 123.0,
+    "actual_yield_kg": 50000.0,
+    "actual_yield_kg_per_ha": 406.5,
+    "quality_score": 8.0,
+    "notes": "Quality products",
+    "year": 2026,
+    "submitted_at": "2026-06-26T21:27:39.875721"
+  },
+  {
+    "farmer_id": "AGRI-1782169648088",
+    "crop": "Rice",
+    "region": "Bono",
+    "district": "Sunyani Municipal",
+    "area_hectares": 123.0,
+    "actual_yield_kg": 50000.0,
+    "actual_yield_kg_per_ha": 406.5,
+    "quality_score": 9.0,
+    "notes": null,
+    "year": 2026,
+    "submitted_at": "2026-06-27T09:29:24.662303"
+  },
+  {
+    "farmer_id": "AGRI-1782169648088",
+    "crop": "Rice",
+    "region": "Bono",
+    "district": "Sunyani Municipal",
+    "town": null,
+    "phone": null,
+    "area_hectares": 60.0,
+    "actual_yield_kg": 6000.0,
+    "actual_yield_kg_per_ha": 100.0,
+    "quantity_available_kg": 6000.0,
+    "price_per_kg_ghs": null,
+    "quality_score": 8.0,
+    "notes": null,
+    "year": 2026,
+    "submitted_at": "2026-06-27T10:17:19.453566"
+  }
+]

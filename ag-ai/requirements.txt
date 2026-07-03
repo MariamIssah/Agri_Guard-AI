@@ -1,0 +1,19 @@
+# FastAPI backend
+fastapi==0.138.0
+uvicorn[standard]==0.49.0
+pydantic==2.13.4
+python-multipart==0.0.20
+
+# Database
+psycopg2-binary==2.9.12
+python-dotenv==1.2.2
+
+# ML / Data
+pandas==3.0.3
+numpy==2.4.6
+scikit-learn==1.9.0
+joblib==1.5.3
+
+# Image processing (disease endpoint — skipped gracefully if absent)
+Pillow==11.2.1
+matplotlib==3.11.0

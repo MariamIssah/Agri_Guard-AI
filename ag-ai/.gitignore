@@ -1,0 +1,73 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+*.whl
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Model artifacts — keep production models, exclude disease/torch weights
+*.pth
+*.pt
+# Keep .joblib files (sklearn models needed for deployment)
+# Keep Prediction System/models/ for deployment
+Advisory\ System/models/
+Advisory\ system/models/
+
+# Large data files and archives
+*.zip
+archive*/
+
+# Jupyter notebooks (large embedded outputs — not needed for deployment)
+*.ipynb
+.ipynb_checkpoints/
+
+# Environment / secrets
+.env
+.env.local
+*.env
+
+# IDE
+.vscode/
+.idea/
+*.suo
+*.user
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+logs/
+
+# Temp files
+tmp_*.py
+*.tmp
+
+# Flutter / Dart
+agriguard_ai/.dart_tool/
+agriguard_ai/build/
+agriguard_ai/.flutter-plugins
+agriguard_ai/.flutter-plugins-dependencies
+agriguard_ai/.packages
+
+# Flutter generated
+agriguard_ai/**/*.g.dart
+agriguard_ai/**/*.freezed.dart
+agriguard_ai/**/*.mocks.dart
+
+# Farmer submission raw data (contains PII)
+farmer_submissions/raw/
+farmer_submissions/uploads/

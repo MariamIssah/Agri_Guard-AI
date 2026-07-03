@@ -1,0 +1,1 @@
+farmer_id,name,phone,region,district,community,crop_type,crop_variety,area_hectares,planting_date,harvest_date,total_harvest_kg,yield_kg_per_ha,season,rainfall_mm,avg_temp_c,humidity_pct,soil_type,fertilizer_kg,irrigation_mm,pest_incidents,management_notes,quality_grade,submission_date,submission_source

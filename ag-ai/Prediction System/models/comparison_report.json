@@ -1,0 +1,36 @@
+{
+  "generated_at": "2026-07-02T16:10:25.577398",
+  "n_total": 902,
+  "features": [
+    "Area_Planted_ha",
+    "Year",
+    "Crop_encoded",
+    "Region_encoded",
+    "District_encoded",
+    "national_fertilizer_kg_ha",
+    "national_agri_land_km2"
+  ],
+  "baseline": {
+    "r2_train": 0.8622157028658038,
+    "r2_test": 0.6360933651583569,
+    "mae_test": 3333.6850513323407,
+    "rmse_test": 5887.267968196244,
+    "mape_test": 198.84754219256988,
+    "n_train": 721,
+    "n_test": 181,
+    "train_secs": 0.3
+  },
+  "advanced": {
+    "r2_train": 0.9999191580250293,
+    "r2_test": 0.9266391020424661,
+    "mae_test": 1259.1375192370117,
+    "rmse_test": 2643.3284862313535,
+    "mape_test": 53.44252201263943,
+    "n_train": 721,
+    "n_test": 181,
+    "train_secs": 0.7
+  },
+  "winner": "Advanced (Gradient Boosting)",
+  "r2_improvement": 29.0546,
+  "mae_improvement_kg_ha": 2074.5
+}

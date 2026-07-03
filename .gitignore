@@ -1,0 +1,17 @@
+# Exclude plant disease image dataset (181k images, not needed for deployment)
+ag-ai/dataset/data/plantvillage/
+
+# Exclude virtual environments
+ag-ai/.venv/
+ag-ai/venv/
+
+# Exclude Flutter build artifacts
+ag-ai/agriguard_ai/build/
+ag-ai/agriguard_ai/.dart_tool/
+
+# Exclude notebooks
+ag-ai/**/*.ipynb
+ag-ai/**/.ipynb_checkpoints/
+
+# Exclude secrets
+ag-ai/.env
