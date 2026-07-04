@@ -93,8 +93,14 @@ class _DiseaseScreenState extends State<DiseaseScreen>
       });
     } catch (e) {
       if (!mounted) return;
+      final errStr = e.toString();
+      final isUnavailable = errStr.contains('model_unavailable') ||
+          errStr.contains('500') ||
+          errStr.contains('unavailable');
       setState(() {
-        _imageError = e.toString();
+        _imageError = isUnavailable
+            ? 'Image diagnosis is not available on the cloud server.\n\nThis feature requires a GPU/ML environment. Please use the Text Symptom tab to diagnose your crop instead.'
+            : errStr;
         _imageLoading = false;
       });
     }
@@ -742,12 +748,19 @@ class _ImageDiagnosisResult extends StatelessWidget {
     final confidence = (result['confidence_score'] as num?)?.toDouble() ?? 0;
     final confidenceLevel = result['confidence_level']?.toString() ?? 'high';
     final description = result['description']?.toString() ?? '';
-    final prevention = result['prevention']?.toString() ?? '';
     final rawTreatment = result['treatment'];
+    final rawPrevention = result['prevention'];
     final treatmentSteps = _toStringList(rawTreatment);
+    final preventionSteps = _toStringList(rawPrevention);
     final scopeWarning = result['scope_warning']?.toString();
     final alternatives =
         (result['alternatives'] as List<dynamic>?)?.cast<Map<String, dynamic>>() ?? [];
+    final advisory = result['advisory'] as Map<String, dynamic>?;
+    final advisorySummary = advisory?['summary']?.toString() ?? '';
+    final advisoryTips = advisory != null
+        ? (advisory['tips'] as List<dynamic>? ?? [])
+        : <dynamic>[];
+    final riskLevel = advisory?['risk_level']?.toString() ?? 'low';
 
     // ── Plant identification fields ──────────────────────────────────────────
     final plantIdentified = result['plant_identified'] as bool? ?? true;
@@ -1087,7 +1100,7 @@ class _ImageDiagnosisResult extends StatelessWidget {
           ],
 
           // Prevention
-          if (prevention.isNotEmpty)
+          if (preventionSteps.isNotEmpty) ...[
             _AdvisorySection(
               icon: Icons.shield_outlined,
               title: 'Prevention',
@@ -1095,11 +1108,100 @@ class _ImageDiagnosisResult extends StatelessWidget {
                   ? AgriColors.forestGreen.withValues(alpha: 0.80)
                   : AgriColors.forestGreen,
               isDark: isDark,
-              child: Text(
-                prevention,
-                style: TextStyle(fontSize: 13, height: 1.5, color: onSurface),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  for (var step in preventionSteps)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Icon(Icons.check_circle_outline,
+                              size: 16, color: AgriColors.forestGreen),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(step,
+                                style: TextStyle(
+                                    fontSize: 13,
+                                    height: 1.45,
+                                    color: onSurface)),
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
               ),
             ),
+            const SizedBox(height: 10),
+          ],
+
+          // ── Step 3 — Farm Advisory ─────────────────────────────────────────
+          if (advisorySummary.isNotEmpty || advisoryTips.isNotEmpty) ...[
+            _StepLabel(label: 'Step 3 — Farm Advisory', isDark: isDark),
+            const SizedBox(height: 8),
+            _AdvisorySection(
+              icon: Icons.tips_and_updates_rounded,
+              title: riskLevel == 'high'
+                  ? 'Urgent Action Required'
+                  : riskLevel == 'moderate'
+                      ? 'Recommended Actions'
+                      : 'Monitoring Advice',
+              color: riskLevel == 'high'
+                  ? (isDark
+                      ? AgriColors.danger.withValues(alpha: 0.80)
+                      : AgriColors.danger)
+                  : riskLevel == 'moderate'
+                      ? (isDark
+                          ? AgriColors.gold.withValues(alpha: 0.80)
+                          : AgriColors.gold)
+                      : (isDark
+                          ? AgriColors.forestGreen.withValues(alpha: 0.80)
+                          : AgriColors.forestGreen),
+              isDark: isDark,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (advisorySummary.isNotEmpty) ...[
+                    Text(
+                      advisorySummary,
+                      style: TextStyle(
+                          fontSize: 13, height: 1.5, color: onSurface),
+                    ),
+                    if (advisoryTips.isNotEmpty) const SizedBox(height: 10),
+                  ],
+                  for (final tip in advisoryTips)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(
+                            Icons.arrow_right_rounded,
+                            size: 20,
+                            color: riskLevel == 'high'
+                                ? AgriColors.danger
+                                : riskLevel == 'moderate'
+                                    ? AgriColors.gold
+                                    : AgriColors.forestGreen,
+                          ),
+                          const SizedBox(width: 4),
+                          Expanded(
+                            child: Text(
+                              tip.toString(),
+                              style: TextStyle(
+                                  fontSize: 13,
+                                  height: 1.45,
+                                  color: onSurface),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ],
         ],
       ],
     );

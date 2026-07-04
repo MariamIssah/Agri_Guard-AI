@@ -23,11 +23,10 @@ class ApiKeyService extends ChangeNotifier {
           ? _openWeatherKey!.trim()
           : ApiConfig.openWeatherApiKey;
 
-  /// Returns the runtime-saved backend URL, or the compile-time default.
-  String get effectiveBackendUrl =>
-      _backendUrl?.trim().isNotEmpty == true
-          ? _backendUrl!.trim()
-          : ApiConfig.backendBaseUrl;
+  static const _productionUrl = 'https://agriguard-ai-production.up.railway.app';
+
+  /// Always returns the production Railway URL — ignores any saved local URL.
+  String get effectiveBackendUrl => _productionUrl;
 
   Future<void> load() async {
     final prefs = await SharedPreferences.getInstance();

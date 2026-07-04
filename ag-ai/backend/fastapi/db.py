@@ -475,6 +475,21 @@ def hide_diary_entry(farmer_id: str, entry_id: int) -> bool:
     return updated > 0
 
 
+def query_diary_for_crop_year(farmer_id: str, crop: str, year: int) -> list[dict]:
+    """Diary entries for a farmer's current growing season by crop and year."""
+    sql = """
+        SELECT * FROM farm_diary
+        WHERE farmer_id=%s AND LOWER(crop)=LOWER(%s)
+          AND EXTRACT(YEAR FROM record_date) = %s AND hidden=FALSE
+        ORDER BY record_date
+    """
+    with get_conn() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(sql, (farmer_id, crop, year))
+            rows = cur.fetchall()
+    return [dict(r) for r in rows]
+
+
 def query_all_diary_for_training() -> list[dict]:
     """All diary entries including hidden — for retraining pipeline."""
     sql = "SELECT * FROM farm_diary ORDER BY record_date, submitted_at"

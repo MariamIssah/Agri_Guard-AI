@@ -29,7 +29,7 @@ try:
         hide_submission as db_hide, query_actuals, query_my_submissions,
         create_user, find_user_by_email, soft_delete_user,
         insert_diary_entry, query_my_diary, hide_diary_entry,
-        query_diary_for_season, query_all_for_training,
+        query_diary_for_season, query_diary_for_crop_year, query_all_for_training,
         admin_stats, admin_all_users, admin_all_submissions, admin_all_diary,
         log_buyer_activity, admin_buyer_activity, admin_buyer_stats,
         query_my_activity, delete_activity_entry, clear_my_activity,
@@ -43,7 +43,7 @@ except Exception:
         hide_submission as db_hide, query_actuals, query_my_submissions,
         create_user, find_user_by_email, soft_delete_user,
         insert_diary_entry, query_my_diary, hide_diary_entry,
-        query_diary_for_season, query_all_for_training,
+        query_diary_for_season, query_diary_for_crop_year, query_all_for_training,
         admin_stats, admin_all_users, admin_all_submissions, admin_all_diary,
         log_buyer_activity, admin_buyer_activity, admin_buyer_stats,
         query_my_activity, delete_activity_entry, clear_my_activity,
@@ -102,7 +102,7 @@ class TextDiagnoseRequest(BaseModel):
 
 # ── Directory constants ────────────────────────────────────────────────────────
 _PS_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'Prediction System'))
-_AS_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'Advisory System'))
+_AS_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'Advisory system'))
 
 # ── Advisory System imports (disease model + utils live here after reorganisation)
 if _AS_DIR not in sys.path:
@@ -326,6 +326,24 @@ def get_prediction(payload: YieldForecastRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f'model_load_failed: {e}')
 
+    # Look up farmer's diary entries for this crop/season and aggregate into
+    # in-season features (rainfall, temperature, fertilizer, pest events, etc.)
+    # so the prediction reflects actual growing conditions, not just historical averages.
+    diary_features = None
+    if payload.farmer_id:
+        try:
+            import sys as _sys
+            _sys.path.insert(0, _PS_DIR)
+            from data_prep import aggregate_diary as _agg_diary
+            year = payload.year or datetime.datetime.now().year
+            diary_rows = query_diary_for_crop_year(payload.farmer_id, payload.crop, year)
+            if diary_rows:
+                agg = _agg_diary(diary_rows)
+                key = (payload.farmer_id, (payload.crop or '').strip(), year)
+                diary_features = agg.get(key)
+        except Exception:
+            pass
+
     result = _predict_compat(
         predictor,
         crop=payload.crop,
@@ -334,6 +352,7 @@ def get_prediction(payload: YieldForecastRequest):
         district=payload.district,
         year=payload.year,
         weather=payload.weather_record,
+        diary=diary_features,
     )
 
     # Attach disease/advisory assessment from Advisory Engine
@@ -625,6 +644,25 @@ async def diagnose_disease_image(
     # one crop family.  Below that the image is likely outside the training set.
     plant_identified = identified_crop_confidence >= 60.0
 
+    # ── Trust the farmer's stated crop ────────────────────────────────────────
+    # Real-world phone photos rarely match the clean lab images the model was
+    # trained on. If the farmer already selected their crop, accept it and
+    # proceed with disease diagnosis — they know what they planted.
+    stated_crop_override = False
+    if stated_crop and not plant_identified:
+        _stated_lower = stated_crop.strip().lower()
+        _crop_aliases = {
+            'tomato': 'Tomato', 'corn/maize': 'Corn (Maize)', 'corn': 'Corn (Maize)',
+            'maize': 'Corn (Maize)', 'potato': 'Potato', 'bell pepper': 'Bell Pepper',
+            'pepper': 'Bell Pepper', 'soybean': 'Soybean', 'apple': 'Apple',
+            'grape': 'Grape', 'strawberry': 'Strawberry', 'peach': 'Peach',
+            'cherry': 'Cherry', 'squash': 'Squash', 'raspberry': 'Raspberry',
+            'blueberry': 'Blueberry', 'orange': 'Orange',
+        }
+        identified_crop_display = _crop_aliases.get(_stated_lower, stated_crop.strip().title())
+        plant_identified = True
+        stated_crop_override = True
+
     # Top-3 crop candidates (for the UI)
     crop_candidates = [
         {
@@ -644,7 +682,16 @@ async def diagnose_disease_image(
         confidence_level = 'low'
 
     # ── Top-3 disease alternatives ────────────────────────────────────────────
-    top3 = sorted(enumerate(probabilities), key=lambda x: -x[1])[:3]
+    # Filter alternatives to only show diseases matching the identified crop
+    _crop_filter = identified_crop_display.lower().split('(')[0].strip()
+    top3_all = sorted(enumerate(probabilities), key=lambda x: -x[1])
+    # Try crop-filtered top3 first; fall back to global top3 if not enough
+    top3_filtered = [
+        (i, prob) for i, prob in top3_all
+        if _crop_filter in (class_names[i] if i < len(class_names) else '').lower().replace('_', ' ')
+    ][:3]
+    top3 = top3_filtered if len(top3_filtered) >= 1 else top3_all[:3]
+
     alternatives = [
         {
             'label': class_names[i] if i < len(class_names) else str(i),
@@ -654,21 +701,36 @@ async def diagnose_disease_image(
         for i, prob in top3
     ]
 
+    # Re-pick predicted_label from filtered alternatives when farmer stated crop
+    if stated_crop_override and top3_filtered:
+        best_filtered_idx = top3_filtered[0][0]
+        predicted_label = class_names[best_filtered_idx] if best_filtered_idx < len(class_names) else predicted_label
+        confidence_pct = round(top3_filtered[0][1] * 100, 2)
+        confidence_level = 'high' if confidence_pct >= 80 else 'medium' if confidence_pct >= 50 else 'low'
+
     # ── Scope / quality warning ────────────────────────────────────────────────
     scope_warning = None
-    if not plant_identified:
+    if stated_crop_override:
         scope_warning = (
-            f'The image could not be matched to any supported crop '
-            f'(best match: {identified_crop_display} at {identified_crop_confidence:.1f}%). '
-            'Please take a clear, close-up photo of the leaf of a supported crop.'
+            f'Low image confidence — possible causes: wet leaves after watering, '
+            f'water droplets, glare, or low light. '
+            f'Diagnosis is based on your selected crop ({identified_crop_display}). '
+            f'For best results, photograph a dry leaf in natural daylight.'
+        )
+    elif not plant_identified:
+        scope_warning = (
+            f'Plant not recognised (best match: {identified_crop_display} at {identified_crop_confidence:.1f}%). '
+            'Tip: photograph a single dry leaf close-up in good natural light — '
+            'avoid wet leaves, direct sun glare, or fingers in frame.'
         )
     elif confidence_pct < 60:
         scope_warning = (
             f'Low disease confidence ({confidence_pct:.1f}%). '
-            'Try a clearer, well-lit close-up photo of the affected area.'
+            'Try a closer photo of the affected leaf area in natural daylight '
+            'when the leaves are dry.'
         )
 
-    # ── Advisory details ───────────────────────────────────────────────────────
+    # ── Advisory details from disease_utils (basic lookup) ───────────────────
     if get_disease_details is not None:
         details = get_disease_details(predicted_label)
     else:
@@ -680,14 +742,45 @@ async def diagnose_disease_image(
             'prevention': ['Practice crop rotation and maintain good field hygiene.'],
         }
 
+    # ── Rich advisory from AdvisoryEngine (treatment + tips + risk) ───────────
+    advisory_result = None
+    rich_treatment   = ''
+    rich_prevention  = ''
+    disease_risk     = 0.0
+    if _advisory_engine is not None and plant_identified:
+        try:
+            disease_name_for_engine = details.get('disease_name', predicted_label)
+            crop_for_engine = identified_crop_display
+
+            eng_diagnosis = _advisory_engine.diagnose(
+                crop=crop_for_engine,
+                region='Ghana',
+                observed_disease=disease_name_for_engine,
+            )
+            disease_risk    = eng_diagnosis.get('disease_risk', confidence_pct / 100 * 0.8)
+            rich_treatment  = eng_diagnosis.get('treatment', '')
+            rich_prevention = eng_diagnosis.get('prevention', '')
+
+            advisory_result = _advisory_engine.generate_advisory(
+                crop=crop_for_engine,
+                region='Ghana',
+                disease_risk=disease_risk,
+                treatment=rich_treatment,
+                prevention=rich_prevention,
+            )
+        except Exception:
+            pass
+
+    # Use rich treatment/prevention when available, fall back to basic lookup
+    final_treatment  = rich_treatment  or details.get('treatment', [])
+    final_prevention = rich_prevention or details.get('prevention', [])
+
     # ── Crop mismatch check ────────────────────────────────────────────────────
     crop_mismatch = False
     mismatch_message = None
     if stated_crop and plant_identified:
-        # Normalise both to lowercase for comparison
-        stated_norm = stated_crop.strip().lower()
+        stated_norm    = stated_crop.strip().lower()
         identified_norm = identified_crop_display.lower()
-        # Allow partial match (e.g. "maize" matches "corn (maize)")
         if stated_norm not in identified_norm and identified_norm not in stated_norm:
             crop_mismatch = True
             mismatch_message = (
@@ -700,22 +793,31 @@ async def diagnose_disease_image(
     return {
         'status': 'success',
         # ── Plant identification ───────────────────────────────────────────────
-        'plant_identified': plant_identified,
-        'identified_crop': identified_crop_display,
-        'identified_crop_confidence': identified_crop_confidence,
-        'crop_candidates': crop_candidates,
-        'stated_crop': stated_crop,
-        'crop_mismatch': crop_mismatch,
-        'mismatch_message': mismatch_message,
+        'plant_identified':             plant_identified,
+        'identified_crop':              identified_crop_display,
+        'identified_crop_confidence':   identified_crop_confidence,
+        'crop_candidates':              crop_candidates,
+        'stated_crop':                  stated_crop,
+        'crop_mismatch':                crop_mismatch,
+        'mismatch_message':             mismatch_message,
         # ── Disease diagnosis ─────────────────────────────────────────────────
-        'disease_label': predicted_label,
+        'disease_label':    predicted_label,
         'confidence_score': round(confidence_pct, 2),
         'confidence_level': confidence_level,
-        'alternatives': alternatives,
-        'scope_warning': scope_warning,
-        'supported_crops': SUPPORTED_CROPS,
-        'source': 'image_model',
-        **details,
+        'disease_risk':     round(disease_risk, 3),
+        'alternatives':     alternatives,
+        'scope_warning':    scope_warning,
+        'supported_crops':  SUPPORTED_CROPS,
+        'source':           'image_model',
+        # ── Disease info ──────────────────────────────────────────────────────
+        'crop':             details.get('crop', identified_crop_display),
+        'disease_name':     details.get('disease_name', predicted_label),
+        'disease_category': details.get('disease_category', ''),
+        'description':      details.get('description', ''),
+        'treatment':        final_treatment,
+        'prevention':       final_prevention,
+        # ── Advisory (tips, summary, risk level) ──────────────────────────────
+        'advisory':         advisory_result,
     }
 
 
@@ -1170,6 +1272,26 @@ def in_season_forecast(farmer_id: str, crop: str, planting_date: str, area_hecta
 def _check_admin(admin_key: str):
     if admin_key != ADMIN_PASSWORD:
         raise HTTPException(status_code=403, detail='admin_access_required')
+
+
+@app.post('/api/admin/reset-password')
+def admin_reset_password(email: str, new_password: str, admin_key: str):
+    _check_admin(admin_key)
+    import hashlib
+    try:
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "UPDATE users SET password_hash=%s WHERE LOWER(email)=LOWER(%s)",
+                (hashlib.sha256(new_password.encode()).hexdigest(), email)
+            )
+            if cur.rowcount == 0:
+                raise HTTPException(status_code=404, detail='user_not_found')
+        return {'status': 'success', 'message': f'Password reset for {email}'}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get('/api/admin/stats')

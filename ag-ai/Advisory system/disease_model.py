@@ -3,6 +3,7 @@ Plant Disease Image Classifier
 Uses MobileNetV3-Small (pretrained ImageNet) as backbone.
 Training time: ~15-30 min on CPU, ~5 min on GPU  (vs hours for custom CNN).
 """
+from __future__ import annotations  # makes all annotations lazy strings — safe without torch
 
 import argparse
 import json
@@ -11,18 +12,31 @@ import pickle
 import zipfile
 from pathlib import Path
 
-import matplotlib.pyplot as plt
 import numpy as np
-import torch
-import torch.nn as nn
-import torch.optim as optim
-import torch.nn.functional as F
 from PIL import Image
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import LabelEncoder
-from torch.utils.data import Dataset, DataLoader
-from torchvision import transforms, models
-from tqdm import tqdm
+
+# PyTorch imports are optional — only needed for local training, not for
+# ONNX-based inference on the server. Wrap so the module loads without them.
+try:
+    import matplotlib.pyplot as plt
+    import torch
+    import torch.nn as nn
+    import torch.optim as optim
+    import torch.nn.functional as F
+    from sklearn.model_selection import train_test_split
+    from sklearn.preprocessing import LabelEncoder
+    from torch.utils.data import Dataset, DataLoader
+    from torchvision import transforms, models
+    from tqdm import tqdm
+    _TORCH_AVAILABLE = True
+except ImportError:
+    _TORCH_AVAILABLE = False
+    # Stub base class so class definitions below don't crash at import time
+    class Dataset:  # type: ignore
+        pass
+    class nn:  # type: ignore
+        class Module:
+            pass
 
 
 # ── Dataset ────────────────────────────────────────────────────────────────────
@@ -318,6 +332,8 @@ def save_inference_components(model, model_dir, label_encoder, transform, class_
 
 
 def get_device():
+    if not _TORCH_AVAILABLE:
+        raise RuntimeError('PyTorch is not installed')
     return torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
@@ -349,6 +365,10 @@ def _build_model(arch: str, num_classes: int) -> nn.Module:
 
 
 def load_inference_assets(model_dir: str, device: torch.device = None):
+    """
+    Load inference assets. Prefers ONNX Runtime (no PyTorch needed on server).
+    Falls back to PyTorch if .onnx is missing but .pth is present.
+    """
     model_dir = Path(model_dir)
     if not model_dir.exists():
         raise FileNotFoundError(f'Disease model directory not found: {model_dir}')
@@ -359,6 +379,32 @@ def load_inference_assets(model_dir: str, device: torch.device = None):
     with open(model_dir / 'label_encoder.pkl', 'rb') as f:
         label_encoder = pickle.load(f)
 
+    class_names = config.get('classes', [])
+
+    onnx_path = model_dir / 'disease_model.onnx'
+
+    # ── Try ONNX Runtime first (lightweight, no PyTorch needed) ──────────────
+    try:
+        import onnxruntime as ort
+        if onnx_path.exists():
+            sess = ort.InferenceSession(str(onnx_path), providers=['CPUExecutionProvider'])
+            print(f'[INFO] Disease model loaded via ONNX Runtime: {onnx_path}')
+            return {
+                'onnx_session': sess,
+                'label_encoder': label_encoder,
+                'class_names': class_names,
+                'backend': 'onnx',
+            }
+    except ImportError:
+        pass
+
+    # ── Fallback: PyTorch (for local training/development) ───────────────────
+    if not _TORCH_AVAILABLE:
+        raise RuntimeError(
+            'onnxruntime is not installed and PyTorch is not available. '
+            'Install onnxruntime to run inference without PyTorch.'
+        )
+
     with open(model_dir / 'inference_transform.pkl', 'rb') as f:
         transform = pickle.load(f)
 
@@ -368,9 +414,8 @@ def load_inference_assets(model_dir: str, device: torch.device = None):
     num_classes = config['num_classes']
     state = torch.load(model_dir / config['model_path'], map_location=device, weights_only=True)
 
-    # Detect which backbone the saved weights belong to, then build the matching model
     arch = config.get('backbone') or _detect_arch(list(state.keys()))
-    print(f'[INFO] Disease model backbone detected: {arch}')
+    print(f'[INFO] Disease model loaded via PyTorch ({arch})')
     model = _build_model(arch, num_classes)
     model.load_state_dict(state)
     model.to(device)
@@ -380,9 +425,47 @@ def load_inference_assets(model_dir: str, device: torch.device = None):
         'model': model,
         'transform': transform,
         'label_encoder': label_encoder,
-        'class_names': config.get('classes', []),
+        'class_names': class_names,
         'device': device,
+        'backend': 'torch',
     }
+
+
+# ImageNet normalisation constants
+_IMAGENET_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+_IMAGENET_STD  = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+
+
+def _enhance_image(img: Image.Image) -> Image.Image:
+    """
+    Adaptive contrast enhancement for real-world farm photos.
+
+    Farmers often photograph immediately after watering, in harsh sunlight,
+    or in low-light shade. Water droplets create specular highlights that
+    wash out leaf texture. This normalises the per-channel intensity so the
+    model sees leaf features rather than glare or darkness.
+
+    Technique: percentile contrast stretching (p2–p98) per RGB channel.
+    Clips the brightest 2% (glare/water) and darkest 2% (shadow) then
+    rescales to the full 0-255 range.
+    """
+    arr = np.array(img, dtype=np.float32)
+    for c in range(3):
+        ch = arr[:, :, c]
+        lo, hi = np.percentile(ch, (2, 98))
+        if hi > lo:
+            arr[:, :, c] = np.clip((ch - lo) / (hi - lo) * 255.0, 0, 255)
+    return Image.fromarray(arr.astype(np.uint8))
+
+
+def _preprocess_image_numpy(image_path: str, image_size: int = 224) -> np.ndarray:
+    """Preprocess an image for ONNX inference — no torchvision needed."""
+    img = Image.open(image_path).convert('RGB').resize((image_size, image_size))
+    img = _enhance_image(img)                               # remove glare/shadow
+    arr = np.array(img, dtype=np.float32) / 255.0          # HWC, [0,1]
+    arr = (arr - _IMAGENET_MEAN) / _IMAGENET_STD           # ImageNet normalise
+    arr = arr.transpose(2, 0, 1)[np.newaxis, :]            # NCHW
+    return arr
 
 
 def predict_image(model, image_path, transform, device, label_encoder=None):
@@ -407,6 +490,25 @@ def predict_image(model, image_path, transform, device, label_encoder=None):
 
 
 def infer_image(image_path: str, model_assets: dict):
+    backend = model_assets.get('backend', 'torch')
+
+    if backend == 'onnx':
+        import onnxruntime as ort  # already available if backend == onnx
+        sess: ort.InferenceSession = model_assets['onnx_session']
+        label_encoder = model_assets['label_encoder']
+
+        arr = _preprocess_image_numpy(image_path)
+        logits = sess.run(['logits'], {'image': arr})[0]
+
+        # Softmax
+        e = np.exp(logits - logits.max(axis=1, keepdims=True))
+        probs = (e / e.sum(axis=1, keepdims=True))[0]
+
+        top_idx  = int(np.argmax(probs))
+        conf_pct = float(probs[top_idx] * 100)
+        label    = label_encoder.inverse_transform([top_idx])[0]
+        return label, conf_pct, probs.tolist()
+
     return predict_image(
         model=model_assets['model'],
         image_path=image_path,

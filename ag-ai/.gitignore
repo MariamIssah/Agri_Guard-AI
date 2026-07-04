@@ -16,13 +16,11 @@ venv/
 env/
 ENV/
 
-# Model artifacts — keep production models, exclude disease/torch weights
+# Model artifacts — *.pth and *.pt are heavy, keep ONNX and sklearn artifacts
 *.pth
 *.pt
-# Keep .joblib files (sklearn models needed for deployment)
-# Keep Prediction System/models/ for deployment
-Advisory\ System/models/
-Advisory\ system/models/
+# Advisory system/models/ is NOT ignored at directory level so the
+# ONNX model (disease_model.onnx) can be committed for Railway deployment
 
 # Large data files and archives
 *.zip

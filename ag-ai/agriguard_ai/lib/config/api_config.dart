@@ -10,7 +10,7 @@ class ApiConfig {
 
   static const backendBaseUrl = String.fromEnvironment(
     'AGRI_GUARD_BACKEND_URL',
-    defaultValue: 'http://127.0.0.1:8002',
+    defaultValue: 'https://agriguard-ai-production.up.railway.app',
   );
 
   static bool get hasWeatherApiKey => openWeatherApiKey.isNotEmpty;

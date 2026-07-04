@@ -155,8 +155,12 @@ def run_comparison(use_db: bool = True, save_models: bool = True):
 
     # ── Data ──────────────────────────────────────────────────────────────────
     print('\n[STEP 1] Loading and preparing data ...')
-    df = build_dataset(use_db=use_db, include_diary_features=False)
-    X, y, encoders, _ = prepare_features(df, include_diary=False)
+    # Diary features (weather, fertilizer, pest/disease events) are enabled
+    # whenever DB data is used. Historical rows get mean-filled defaults;
+    # farmer rows get their actual aggregated diary values. This means the
+    # model improves automatically as farmers log more diary entries.
+    df = build_dataset(use_db=use_db, include_diary_features=use_db)
+    X, y, encoders, feature_defaults = prepare_features(df, include_diary=use_db)
 
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=0.20, random_state=42
@@ -186,9 +190,9 @@ def run_comparison(use_db: bool = True, save_models: bool = True):
     if save_models:
         MODEL_DIR.mkdir(parents=True, exist_ok=True)
         _save(rf_model, encoders, rf_metrics, features, 'RandomForestRegressor',
-              BASELINE_PARAMS, MODEL_DIR / 'baseline_model.joblib')
+              BASELINE_PARAMS, MODEL_DIR / 'baseline_model.joblib', feature_defaults)
         _save(gbm_model, encoders, gbm_metrics, features, 'GradientBoostingRegressor',
-              ADVANCED_PARAMS, MODEL_DIR / 'advanced_model.joblib')
+              ADVANCED_PARAMS, MODEL_DIR / 'advanced_model.joblib', feature_defaults)
         # Save the BEST model as the active production model
         best = gbm_model if gbm_metrics['r2_test'] >= rf_metrics['r2_test'] else rf_model
         best_type = ('GradientBoostingRegressor'
@@ -197,7 +201,7 @@ def run_comparison(use_db: bool = True, save_models: bool = True):
         best_m = gbm_metrics if gbm_metrics['r2_test'] >= rf_metrics['r2_test'] else rf_metrics
         _save(best, encoders, best_m, features, best_type,
               ADVANCED_PARAMS if best is gbm_model else BASELINE_PARAMS,
-              MODEL_DIR / 'best_model.joblib')
+              MODEL_DIR / 'best_model.joblib', feature_defaults)
         print(f'\n   Models saved to {MODEL_DIR}/')
 
     # ── Print full report ──────────────────────────────────────────────────────
@@ -207,15 +211,17 @@ def run_comparison(use_db: bool = True, save_models: bool = True):
     return rf_metrics, gbm_metrics, features
 
 
-def _save(model, encoders, metrics, features, model_type, params, path):
+def _save(model, encoders, metrics, features, model_type, params, path,
+          feature_defaults=None):
     artifact = {
-        'model':          model,
-        'encoders':       encoders,
-        'metrics':        {k: v for k, v in metrics.items() if k != 'y_pred'},
-        'features':       features,
-        'model_type':     model_type,
-        'hyperparameters': params,
-        'trained_at':     datetime.datetime.now().isoformat(),
+        'model':            model,
+        'encoders':         encoders,
+        'metrics':          {k: v for k, v in metrics.items() if k != 'y_pred'},
+        'features':         features,
+        'feature_defaults': feature_defaults or {},
+        'model_type':       model_type,
+        'hyperparameters':  params,
+        'trained_at':       datetime.datetime.now().isoformat(),
     }
     joblib.dump(artifact, path)
 
