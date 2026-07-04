@@ -64,7 +64,6 @@ Agri_Guard-AI/
     │   └── README.md          ← App setup, screens, APK installation guide
     ├── dataset/               ← Training data (MoFA + FAOSTAT + World Bank)
     ├── requirements.txt       ← Python dependencies
-    ├── railway.toml           ← Railway deployment configuration
     └── Procfile               ← Uvicorn start command
 ```
 
@@ -121,7 +120,7 @@ Interactive API documentation with all 13 endpoints.
 | ML Models | scikit-learn GBM + RF | Lightweight, no GPU required |
 | Database | Supabase (PostgreSQL) | Managed, free tier, PostgREST |
 | Cloud Hosting | Railway | Auto-deploy from GitHub, free tier |
-| Disease Advisory | Rule-based NLP + CNN | Works without internet (text mode) |
+| Disease Advisory | Voting-based NLP + ONNX CNN | Text and image diagnosis, deployed on cloud |
 
 ---
 
@@ -149,7 +148,7 @@ Interactive API documentation with all 13 endpoints.
 
 ### What Was Constrained
 
-**Image disease diagnosis requires PyTorch (~2GB)** which exceeds Railway's free-tier build limits. This feature falls back to a user-friendly message directing farmers to the text-based symptom tab, which works fully on cloud.
+**Image disease diagnosis is fully deployed on Railway** using an ONNX-exported ResNet18 model (44.8MB), replacing the 2GB PyTorch install. Both text-based symptom diagnosis and image upload diagnosis work on the live cloud API.
 
 **Pilot dataset is small (902 rows).** The model generalises reasonably but predictions for districts with few historical records (e.g., some Upper West districts) rely more on regional interpolation than local observation. As farmer submissions accumulate, these predictions will improve.
 

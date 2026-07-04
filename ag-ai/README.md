@@ -50,7 +50,6 @@ ag-ai/
 │       └── API_AG.LND.AGRI.K2_DS2_*.csv          ← World Bank land area data
 │
 ├── requirements.txt               ← Python dependencies (pinned versions)
-├── railway.toml                   ← Railway deployment config
 └── Procfile                       ← Uvicorn start command for Railway
 ```
 
@@ -365,7 +364,7 @@ The API is deployed on Railway and auto-deploys on every push to the `main` bran
 builder = "NIXPACKS"
 
 [deploy]
-startCommand = "uvicorn backend.fastapi.app:app --host 0.0.0.0 --port $PORT"
+startCommand = "cd ag-ai && uvicorn backend.fastapi.app:app --host 0.0.0.0 --port $PORT"
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 3
 ```
@@ -381,8 +380,11 @@ ADMIN_PASSWORD=agriguard2025
 
 ### What Is NOT on Railway
 
-- **PyTorch disease image model** — ResNet18 CNN requires ~2GB PyTorch install, which exceeds Railway's free-tier build limits. The image diagnosis feature is available only when running the API locally with full Python dependencies.
 - **Notebooks** — Excluded from git (`.gitignore: *.ipynb`) to keep repo size manageable.
+
+### Image Diagnosis on Railway
+
+The ResNet18 disease image model is deployed as an **ONNX model** (`Advisory system/models/disease/disease_model.onnx`, 44.8MB). `onnxruntime` (5MB package) replaces the 2GB PyTorch install, making full image diagnosis available on the live cloud API with no extra memory or build cost.
 
 ---
 
