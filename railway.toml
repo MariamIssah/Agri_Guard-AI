@@ -1,8 +1,7 @@
 [build]
 builder = "NIXPACKS"
-rootDirectory = "ag-ai"
 
 [deploy]
-startCommand = "uvicorn backend.fastapi.app:app --host 0.0.0.0 --port $PORT"
+startCommand = "cd ag-ai && uvicorn backend.fastapi.app:app --host 0.0.0.0 --port $PORT"
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 3
