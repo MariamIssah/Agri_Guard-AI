@@ -6,6 +6,9 @@ import '../services/location_session.dart';
 import '../utils/app_theme.dart';
 import '../utils/ghana_locations.dart';
 
+// Sentinel value used as the dropdown item that triggers manual text entry.
+const _kOther = '__other__';
+
 class LocationPicker extends StatefulWidget {
   const LocationPicker({
     super.key,
@@ -22,42 +25,52 @@ class LocationPicker extends StatefulWidget {
 
 class _LocationPickerState extends State<LocationPicker> {
   final _locationService = LocationService();
-  final _manualDistrictController = TextEditingController();
-  final _manualTownController = TextEditingController();
+  final _districtController = TextEditingController();
+  final _townController = TextEditingController();
 
   String? _country = defaultCountry;
   String? _region;
-  String? _district;
-  String? _town;
+
+  /// Null  → nothing chosen yet.
+  /// _kOther → user chose "Other", show text field.
+  /// anything else → a value from the hardcoded list.
+  String? _districtDropdown;
+  String? _townDropdown;
+
+  bool _detecting = false;
   double? _latitude;
   double? _longitude;
-  bool _useManualDistrict = false;
-  bool _useManualTown = false;
-  bool _detecting = false;
+
+  bool get _districtIsManual => _districtDropdown == _kOther;
+  bool get _townIsManual =>
+      _districtIsManual || _townDropdown == _kOther;
+
+  // The actual district/town values sent to the parent.
+  String? get _effectiveDistrict => _districtIsManual
+      ? _districtController.text.trim().nullIfEmpty
+      : _districtDropdown;
+
+  String? get _effectiveTown => _townIsManual
+      ? _townController.text.trim().nullIfEmpty
+      : _townDropdown;
 
   @override
   void dispose() {
-    _manualDistrictController.dispose();
-    _manualTownController.dispose();
+    _districtController.dispose();
+    _townController.dispose();
     super.dispose();
   }
 
   void _notify() {
-    final district = _useManualDistrict
-        ? _manualDistrictController.text.trim()
-        : _district;
-    final town = _useManualTown
-        ? _manualTownController.text.trim()
-        : _town;
     widget.onChanged(
       LocationData(
         country: _country,
         region: _region,
-        district: district?.isEmpty ?? true ? null : district,
-        town: town?.isEmpty ?? true ? null : town,
+        district: _effectiveDistrict,
+        town: _effectiveTown,
         latitude: _latitude,
         longitude: _longitude,
-        isManualTown: _useManualTown,
+        isManualTown: _townIsManual,
       ),
     );
   }
@@ -72,8 +85,10 @@ class _LocationPickerState extends State<LocationPicker> {
       final districtInList =
           loc.district != null && districtList.contains(loc.district);
 
-      final townList = townsForDistrict(districtInList ? loc.district : null);
-      final townInList = loc.town != null && townList.contains(loc.town);
+      final townList =
+          townsForDistrict(districtInList ? loc.district : null);
+      final townInList =
+          loc.town != null && townList.contains(loc.town);
 
       setState(() {
         _country = loc.country ?? defaultCountry;
@@ -81,38 +96,31 @@ class _LocationPickerState extends State<LocationPicker> {
         _latitude = loc.latitude;
         _longitude = loc.longitude;
 
-        // District: use dropdown if matched, manual text field otherwise
+        // District
         if (districtInList) {
-          _useManualDistrict = false;
-          _district = loc.district;
-          _manualDistrictController.clear();
+          _districtDropdown = loc.district;
+          _districtController.clear();
         } else if (loc.district != null && loc.district!.isNotEmpty) {
-          _useManualDistrict = true;
-          _district = null;
-          _manualDistrictController.text = loc.district!;
+          _districtDropdown = _kOther;
+          _districtController.text = loc.district!;
         } else {
-          _useManualDistrict = false;
-          _district = null;
-          _manualDistrictController.clear();
+          _districtDropdown = null;
+          _districtController.clear();
         }
 
-        // When district is manual, town must also be manual
-        if (_useManualDistrict) {
-          _useManualTown = true;
-          _town = null;
-          _manualTownController.text = loc.town ?? '';
+        // Town
+        if (_districtIsManual) {
+          _townDropdown = _kOther;
+          _townController.text = loc.town ?? '';
         } else if (townInList) {
-          _useManualTown = false;
-          _town = loc.town;
-          _manualTownController.clear();
+          _townDropdown = loc.town;
+          _townController.clear();
         } else if (loc.town != null && loc.town!.isNotEmpty) {
-          _useManualTown = true;
-          _town = null;
-          _manualTownController.text = loc.town!;
+          _townDropdown = _kOther;
+          _townController.text = loc.town!;
         } else {
-          _useManualTown = false;
-          _town = null;
-          _manualTownController.clear();
+          _townDropdown = null;
+          _townController.clear();
         }
       });
       _notify();
@@ -122,8 +130,11 @@ class _LocationPickerState extends State<LocationPicker> {
         final label = loc.isComplete
             ? 'Location detected: ${loc.town}, ${loc.region}'
             : loc.region != null
-                ? 'Region detected: ${loc.region}  (${loc.latitude?.toStringAsFixed(3)}, ${loc.longitude?.toStringAsFixed(3)})'
-                : 'GPS captured (${loc.latitude?.toStringAsFixed(4)}, ${loc.longitude?.toStringAsFixed(4)})';
+                ? 'Region detected: ${loc.region} '
+                    '(${loc.latitude?.toStringAsFixed(3)}, '
+                    '${loc.longitude?.toStringAsFixed(3)})'
+                : 'GPS captured (${loc.latitude?.toStringAsFixed(4)}, '
+                    '${loc.longitude?.toStringAsFixed(4)})';
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(label),
@@ -154,19 +165,19 @@ class _LocationPickerState extends State<LocationPicker> {
     }
   }
 
-  List<String> get _districtItems => districtsForRegion(_region);
-
-  List<String> get _townItems =>
-      _useManualDistrict ? [] : townsForDistrict(_district);
-
   @override
   Widget build(BuildContext context) {
     final onSurface = Theme.of(context).colorScheme.onSurface;
     final onSurfaceVariant = Theme.of(context).colorScheme.onSurfaceVariant;
+    final districtItems = districtsForRegion(_region);
+    final townItems = _districtIsManual
+        ? <String>[]
+        : townsForDistrict(_districtDropdown);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        // ── Header ────────────────────────────────────────────────────
         Row(
           children: [
             const Icon(Icons.location_on_outlined,
@@ -185,6 +196,8 @@ class _LocationPickerState extends State<LocationPicker> {
           ],
         ),
         const SizedBox(height: 12),
+
+        // ── GPS button ────────────────────────────────────────────────
         OutlinedButton.icon(
           onPressed: _detecting ? null : _useCurrentLocation,
           icon: _detecting
@@ -200,6 +213,8 @@ class _LocationPickerState extends State<LocationPicker> {
                 : 'Use My Current Location (GPS)',
           ),
         ),
+
+        // ── GPS result card ───────────────────────────────────────────
         if (_latitude != null && _longitude != null) ...[
           const SizedBox(height: 12),
           Card(
@@ -211,35 +226,28 @@ class _LocationPickerState extends State<LocationPicker> {
                 children: [
                   _coordRow(context, 'Country', _country),
                   _coordRow(context, 'Region', _region),
+                  _coordRow(context, 'District', _effectiveDistrict),
+                  _coordRow(context, 'Town', _effectiveTown),
                   _coordRow(
                     context,
-                    'District',
-                    _useManualDistrict
-                        ? _manualDistrictController.text
-                        : _district,
+                    'GPS',
+                    '${_latitude!.toStringAsFixed(4)}, '
+                        '${_longitude!.toStringAsFixed(4)}',
                   ),
-                  _coordRow(
-                    context,
-                    'Town',
-                    _useManualTown
-                        ? _manualTownController.text
-                        : _town,
-                  ),
-                  _coordRow(
-                    context, 'GPS', '${_latitude!.toStringAsFixed(4)}, ${_longitude!.toStringAsFixed(4)}'),
                 ],
               ),
             ),
           ),
         ],
         const SizedBox(height: 16),
+
         Text(
           'Or select / enter manually',
           style: TextStyle(fontSize: 13, color: onSurfaceVariant),
         ),
         const SizedBox(height: 12),
 
-        // ── Country ───────────────────────────────────────────────
+        // ── Country ───────────────────────────────────────────────────
         DropdownButtonFormField<String>(
           isExpanded: true,
           value: _country,
@@ -257,7 +265,7 @@ class _LocationPickerState extends State<LocationPicker> {
         ),
         const SizedBox(height: 14),
 
-        // ── Region ────────────────────────────────────────────────
+        // ── Region ────────────────────────────────────────────────────
         DropdownButtonFormField<String>(
           isExpanded: true,
           value: _region,
@@ -281,167 +289,155 @@ class _LocationPickerState extends State<LocationPicker> {
               .toList(),
           onChanged: (v) => setState(() {
             _region = v;
-            _district = null;
-            _town = null;
-            _useManualDistrict = false;
-            _useManualTown = false;
-            _manualDistrictController.clear();
-            _manualTownController.clear();
+            _districtDropdown = null;
+            _townDropdown = null;
+            _districtController.clear();
+            _townController.clear();
             _notify();
           }),
         ),
         const SizedBox(height: 14),
 
-        // ── District manual toggle ─────────────────────────────────
-        Row(
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+        // ── District ──────────────────────────────────────────────────
+        DropdownButtonFormField<String>(
+          isExpanded: true,
+          value: _districtDropdown,
+          decoration: const InputDecoration(
+            labelText: 'District',
+            prefixIcon: Icon(Icons.location_city_outlined),
+            helperText: 'Select from the list or choose "Other" to type yours',
+          ),
+          items: [
+            // All hardcoded districts for the chosen region
+            ...districtItems.map(
+              (d) => DropdownMenuItem(
+                value: d,
+                child: Text(d, overflow: TextOverflow.ellipsis),
+              ),
+            ),
+            // Always-visible "Other" option
+            DropdownMenuItem(
+              value: _kOther,
+              child: Row(
                 children: [
+                  Icon(Icons.edit_outlined,
+                      size: 16,
+                      color: Theme.of(context).colorScheme.primary),
+                  const SizedBox(width: 6),
                   Text(
-                    'Enter district manually',
-                    style: TextStyle(fontSize: 14, color: onSurface),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    'If your district is not in the list',
-                    style: TextStyle(fontSize: 12, color: onSurfaceVariant),
-                    overflow: TextOverflow.ellipsis,
+                    'Other — type your district',
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.primary,
+                      fontStyle: FontStyle.italic,
+                    ),
                   ),
                 ],
               ),
             ),
-            Switch(
-              value: _useManualDistrict,
-              activeTrackColor: AgriColors.mintGreen,
-              thumbColor: WidgetStateProperty.resolveWith(
-                (states) => states.contains(WidgetState.selected)
-                    ? AgriColors.forestGreen
-                    : null,
-              ),
-              onChanged: (v) => setState(() {
-                _useManualDistrict = v;
-                _district = null;
-                _town = null;
-                if (!v) {
-                  _manualDistrictController.clear();
-                  _useManualTown = false;
-                  _manualTownController.clear();
-                } else {
-                  // Manual district forces manual town too
-                  _useManualTown = true;
-                }
-                _notify();
-              }),
-            ),
           ],
+          onChanged: _region == null
+              ? null
+              : (v) => setState(() {
+                    _districtDropdown = v;
+                    _townDropdown = null;
+                    _districtController.clear();
+                    _townController.clear();
+                    if (v == _kOther) {
+                      // town must also be manual when district is free-text
+                      _townDropdown = _kOther;
+                    }
+                    _notify();
+                  }),
         ),
-        if (_useManualDistrict) ...[
+
+        // Text field shown when "Other" is chosen for district
+        if (_districtIsManual) ...[
+          const SizedBox(height: 10),
           TextFormField(
-            controller: _manualDistrictController,
+            controller: _districtController,
             decoration: const InputDecoration(
-              labelText: 'District / Municipality',
+              labelText: 'District / Municipality name',
               prefixIcon: Icon(Icons.location_city_outlined),
-              hintText: 'e.g. Tamale Metro',
+              hintText: 'e.g. Kumbungu District, Nkoranza North…',
             ),
+            textCapitalization: TextCapitalization.words,
             onChanged: (_) => _notify(),
-          ),
-        ] else ...[
-          DropdownButtonFormField<String>(
-            isExpanded: true,
-            value: _district,
-            decoration: const InputDecoration(
-              labelText: 'District',
-              prefixIcon: Icon(Icons.location_city_outlined),
-            ),
-            items: _districtItems
-                .map((d) => DropdownMenuItem(
-                      value: d,
-                      child: Text(d, overflow: TextOverflow.ellipsis),
-                    ))
-                .toList(),
-            onChanged: _districtItems.isEmpty
-                ? null
-                : (v) => setState(() {
-                      _district = v;
-                      _town = null;
-                      _notify();
-                    }),
           ),
         ],
         const SizedBox(height: 14),
 
-        // ── Town manual toggle ─────────────────────────────────────
-        Row(
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Enter town/community manually',
-                    style: TextStyle(fontSize: 14, color: onSurface),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    'For communities not yet in the database',
-                    style: TextStyle(fontSize: 12, color: onSurfaceVariant),
-                    overflow: TextOverflow.ellipsis,
-                    maxLines: 2,
-                  ),
-                ],
-              ),
-            ),
-            Switch(
-              value: _useManualTown,
-              activeTrackColor: AgriColors.mintGreen,
-              thumbColor: WidgetStateProperty.resolveWith(
-                (states) => states.contains(WidgetState.selected)
-                    ? AgriColors.forestGreen
-                    : null,
-              ),
-              onChanged: _useManualDistrict
-                  ? null // locked on when district is manual
-                  : (v) => setState(() {
-                        _useManualTown = v;
-                        if (!v) _manualTownController.clear();
-                        _notify();
-                      }),
-            ),
-          ],
-        ),
-        if (_useManualTown) ...[
+        // ── Town ──────────────────────────────────────────────────────
+        if (_districtIsManual) ...[
+          // District is free-text → town must be free-text too
           TextFormField(
-            controller: _manualTownController,
+            controller: _townController,
             decoration: const InputDecoration(
-              labelText: 'Town / Community Name',
-              prefixIcon: Icon(Icons.edit_location_alt_outlined),
-              hintText: 'e.g. Tamale, Kumbungu, Savelugu...',
+              labelText: 'Town / Community',
+              prefixIcon: Icon(Icons.place_outlined),
+              hintText: 'e.g. Kumbungu, Tolon, Wulensi…',
             ),
+            textCapitalization: TextCapitalization.words,
             onChanged: (_) => _notify(),
           ),
         ] else ...[
           DropdownButtonFormField<String>(
             isExpanded: true,
-            value: _town,
+            value: _townDropdown,
             decoration: const InputDecoration(
-              labelText: 'Town',
+              labelText: 'Town / Community',
               prefixIcon: Icon(Icons.place_outlined),
+              helperText:
+                  'Select from the list or choose "Other" to type yours',
             ),
-            items: _townItems
-                .map((t) => DropdownMenuItem(
-                      value: t,
-                      child: Text(t, overflow: TextOverflow.ellipsis),
-                    ))
-                .toList(),
-            onChanged: _townItems.isEmpty
+            items: [
+              ...townItems.map(
+                (t) => DropdownMenuItem(
+                  value: t,
+                  child: Text(t, overflow: TextOverflow.ellipsis),
+                ),
+              ),
+              DropdownMenuItem(
+                value: _kOther,
+                child: Row(
+                  children: [
+                    Icon(Icons.edit_outlined,
+                        size: 16,
+                        color: Theme.of(context).colorScheme.primary),
+                    const SizedBox(width: 6),
+                    Text(
+                      'Other — type your town',
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.primary,
+                        fontStyle: FontStyle.italic,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+            onChanged: _districtDropdown == null
                 ? null
                 : (v) => setState(() {
-                      _town = v;
+                      _townDropdown = v;
+                      _townController.clear();
                       _notify();
                     }),
           ),
+
+          // Text field shown when "Other" is chosen for town
+          if (_townIsManual && !_districtIsManual) ...[
+            const SizedBox(height: 10),
+            TextFormField(
+              controller: _townController,
+              decoration: const InputDecoration(
+                labelText: 'Town / Community name',
+                prefixIcon: Icon(Icons.place_outlined),
+                hintText: 'e.g. Kumbungu, Tolon, Wulensi…',
+              ),
+              textCapitalization: TextCapitalization.words,
+              onChanged: (_) => _notify(),
+            ),
+          ],
         ],
       ],
     );
@@ -476,6 +472,10 @@ class _LocationPickerState extends State<LocationPicker> {
       ),
     );
   }
+}
+
+extension on String {
+  String? get nullIfEmpty => isEmpty ? null : this;
 }
 
 /// Validates that a [LocationData] from [LocationPicker] is complete.
