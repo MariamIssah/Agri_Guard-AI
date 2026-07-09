@@ -22,6 +22,7 @@ class LocationPicker extends StatefulWidget {
 
 class _LocationPickerState extends State<LocationPicker> {
   final _locationService = LocationService();
+  final _manualDistrictController = TextEditingController();
   final _manualTownController = TextEditingController();
 
   String? _country = defaultCountry;
@@ -30,16 +31,21 @@ class _LocationPickerState extends State<LocationPicker> {
   String? _town;
   double? _latitude;
   double? _longitude;
+  bool _useManualDistrict = false;
   bool _useManualTown = false;
   bool _detecting = false;
 
   @override
   void dispose() {
+    _manualDistrictController.dispose();
     _manualTownController.dispose();
     super.dispose();
   }
 
   void _notify() {
+    final district = _useManualDistrict
+        ? _manualDistrictController.text.trim()
+        : _district;
     final town = _useManualTown
         ? _manualTownController.text.trim()
         : _town;
@@ -47,7 +53,7 @@ class _LocationPickerState extends State<LocationPicker> {
       LocationData(
         country: _country,
         region: _region,
-        district: _district,
+        district: district?.isEmpty ?? true ? null : district,
         town: town?.isEmpty ?? true ? null : town,
         latitude: _latitude,
         longitude: _longitude,
@@ -63,23 +69,49 @@ class _LocationPickerState extends State<LocationPicker> {
       if (!mounted) return;
 
       final districtList = districtsForRegion(loc.region);
-      final townList = townsForDistrict(loc.district);
+      final districtInList =
+          loc.district != null && districtList.contains(loc.district);
+
+      final townList = townsForDistrict(districtInList ? loc.district : null);
       final townInList = loc.town != null && townList.contains(loc.town);
 
       setState(() {
         _country = loc.country ?? defaultCountry;
         _region = loc.region;
-        _district = loc.district != null && districtList.contains(loc.district)
-            ? loc.district
-            : loc.district;
         _latitude = loc.latitude;
         _longitude = loc.longitude;
-        _useManualTown = loc.town != null && !townInList;
-        if (_useManualTown) {
-          _manualTownController.text = loc.town ?? '';
-          _town = null;
+
+        // District: use dropdown if matched, manual text field otherwise
+        if (districtInList) {
+          _useManualDistrict = false;
+          _district = loc.district;
+          _manualDistrictController.clear();
+        } else if (loc.district != null && loc.district!.isNotEmpty) {
+          _useManualDistrict = true;
+          _district = null;
+          _manualDistrictController.text = loc.district!;
         } else {
+          _useManualDistrict = false;
+          _district = null;
+          _manualDistrictController.clear();
+        }
+
+        // When district is manual, town must also be manual
+        if (_useManualDistrict) {
+          _useManualTown = true;
+          _town = null;
+          _manualTownController.text = loc.town ?? '';
+        } else if (townInList) {
+          _useManualTown = false;
           _town = loc.town;
+          _manualTownController.clear();
+        } else if (loc.town != null && loc.town!.isNotEmpty) {
+          _useManualTown = true;
+          _town = null;
+          _manualTownController.text = loc.town!;
+        } else {
+          _useManualTown = false;
+          _town = null;
           _manualTownController.clear();
         }
       });
@@ -87,14 +119,14 @@ class _LocationPickerState extends State<LocationPicker> {
 
       if (mounted) {
         context.read<LocationSession>().setLocation(loc);
+        final label = loc.isComplete
+            ? 'Location detected: ${loc.town}, ${loc.region}'
+            : loc.region != null
+                ? 'Region detected: ${loc.region}  (${loc.latitude?.toStringAsFixed(3)}, ${loc.longitude?.toStringAsFixed(3)})'
+                : 'GPS captured (${loc.latitude?.toStringAsFixed(4)}, ${loc.longitude?.toStringAsFixed(4)})';
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(
-              loc.isComplete
-                  ? 'Location detected: ${loc.town}, ${loc.region}'
-                  : 'GPS captured (${loc.latitude?.toStringAsFixed(4)}, '
-                      '${loc.longitude?.toStringAsFixed(4)})',
-            ),
+            content: Text(label),
             backgroundColor: AgriColors.leafGreen,
           ),
         );
@@ -122,12 +154,15 @@ class _LocationPickerState extends State<LocationPicker> {
     }
   }
 
+  List<String> get _districtItems => districtsForRegion(_region);
+
+  List<String> get _townItems =>
+      _useManualDistrict ? [] : townsForDistrict(_district);
+
   @override
   Widget build(BuildContext context) {
     final onSurface = Theme.of(context).colorScheme.onSurface;
     final onSurfaceVariant = Theme.of(context).colorScheme.onSurfaceVariant;
-    final districts = districtsForRegion(_region);
-    final towns = townsForDistrict(_district);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -160,7 +195,9 @@ class _LocationPickerState extends State<LocationPicker> {
                 )
               : const Icon(Icons.my_location_rounded),
           label: Text(
-            _detecting ? 'Detecting location...' : 'Use My Current Location',
+            _detecting
+                ? 'Detecting location...'
+                : 'Use My Current Location (GPS)',
           ),
         ),
         if (_latitude != null && _longitude != null) ...[
@@ -174,13 +211,22 @@ class _LocationPickerState extends State<LocationPicker> {
                 children: [
                   _coordRow(context, 'Country', _country),
                   _coordRow(context, 'Region', _region),
-                  _coordRow(context, 'District', _district),
-                  _coordRow(context, 'Town',
-                      _useManualTown ? _manualTownController.text : _town),
-                  _coordRow(context, 'Latitude',
-                      _latitude?.toStringAsFixed(4)),
-                  _coordRow(context, 'Longitude',
-                      _longitude?.toStringAsFixed(4)),
+                  _coordRow(
+                    context,
+                    'District',
+                    _useManualDistrict
+                        ? _manualDistrictController.text
+                        : _district,
+                  ),
+                  _coordRow(
+                    context,
+                    'Town',
+                    _useManualTown
+                        ? _manualTownController.text
+                        : _town,
+                  ),
+                  _coordRow(
+                    context, 'GPS', '${_latitude!.toStringAsFixed(4)}, ${_longitude!.toStringAsFixed(4)}'),
                 ],
               ),
             ),
@@ -188,13 +234,15 @@ class _LocationPickerState extends State<LocationPicker> {
         ],
         const SizedBox(height: 16),
         Text(
-          'Or select manually',
+          'Or select / enter manually',
           style: TextStyle(fontSize: 13, color: onSurfaceVariant),
         ),
         const SizedBox(height: 12),
+
+        // ── Country ───────────────────────────────────────────────
         DropdownButtonFormField<String>(
           isExpanded: true,
-          initialValue: _country,
+          value: _country,
           decoration: const InputDecoration(
             labelText: 'Country',
             prefixIcon: Icon(Icons.public),
@@ -208,9 +256,11 @@ class _LocationPickerState extends State<LocationPicker> {
           }),
         ),
         const SizedBox(height: 14),
+
+        // ── Region ────────────────────────────────────────────────
         DropdownButtonFormField<String>(
           isExpanded: true,
-          initialValue: _region,
+          value: _region,
           decoration: InputDecoration(
             labelText: 'Region',
             prefixIcon: const Icon(Icons.map_outlined),
@@ -233,32 +283,96 @@ class _LocationPickerState extends State<LocationPicker> {
             _region = v;
             _district = null;
             _town = null;
+            _useManualDistrict = false;
+            _useManualTown = false;
+            _manualDistrictController.clear();
+            _manualTownController.clear();
             _notify();
           }),
         ),
         const SizedBox(height: 14),
-        DropdownButtonFormField<String>(
-          isExpanded: true,
-          initialValue: _district,
-          decoration: const InputDecoration(
-            labelText: 'District',
-            prefixIcon: Icon(Icons.location_city_outlined),
-          ),
-          items: districts
-              .map((d) => DropdownMenuItem(
-                    value: d,
-                    child: Text(d, overflow: TextOverflow.ellipsis),
-                  ))
-              .toList(),
-          onChanged: districts.isEmpty
-              ? null
-              : (v) => setState(() {
-                    _district = v;
-                    _town = null;
-                    _notify();
-                  }),
+
+        // ── District manual toggle ─────────────────────────────────
+        Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Enter district manually',
+                    style: TextStyle(fontSize: 14, color: onSurface),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    'If your district is not in the list',
+                    style: TextStyle(fontSize: 12, color: onSurfaceVariant),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
+            ),
+            Switch(
+              value: _useManualDistrict,
+              activeTrackColor: AgriColors.mintGreen,
+              thumbColor: WidgetStateProperty.resolveWith(
+                (states) => states.contains(WidgetState.selected)
+                    ? AgriColors.forestGreen
+                    : null,
+              ),
+              onChanged: (v) => setState(() {
+                _useManualDistrict = v;
+                _district = null;
+                _town = null;
+                if (!v) {
+                  _manualDistrictController.clear();
+                  _useManualTown = false;
+                  _manualTownController.clear();
+                } else {
+                  // Manual district forces manual town too
+                  _useManualTown = true;
+                }
+                _notify();
+              }),
+            ),
+          ],
         ),
+        if (_useManualDistrict) ...[
+          TextFormField(
+            controller: _manualDistrictController,
+            decoration: const InputDecoration(
+              labelText: 'District / Municipality',
+              prefixIcon: Icon(Icons.location_city_outlined),
+              hintText: 'e.g. Tamale Metro',
+            ),
+            onChanged: (_) => _notify(),
+          ),
+        ] else ...[
+          DropdownButtonFormField<String>(
+            isExpanded: true,
+            value: _district,
+            decoration: const InputDecoration(
+              labelText: 'District',
+              prefixIcon: Icon(Icons.location_city_outlined),
+            ),
+            items: _districtItems
+                .map((d) => DropdownMenuItem(
+                      value: d,
+                      child: Text(d, overflow: TextOverflow.ellipsis),
+                    ))
+                .toList(),
+            onChanged: _districtItems.isEmpty
+                ? null
+                : (v) => setState(() {
+                      _district = v;
+                      _town = null;
+                      _notify();
+                    }),
+          ),
+        ],
         const SizedBox(height: 14),
+
+        // ── Town manual toggle ─────────────────────────────────────
         Row(
           children: [
             Expanded(
@@ -287,11 +401,13 @@ class _LocationPickerState extends State<LocationPicker> {
                     ? AgriColors.forestGreen
                     : null,
               ),
-              onChanged: (v) => setState(() {
-                _useManualTown = v;
-                if (!v) _manualTownController.clear();
-                _notify();
-              }),
+              onChanged: _useManualDistrict
+                  ? null // locked on when district is manual
+                  : (v) => setState(() {
+                        _useManualTown = v;
+                        if (!v) _manualTownController.clear();
+                        _notify();
+                      }),
             ),
           ],
         ),
@@ -301,25 +417,25 @@ class _LocationPickerState extends State<LocationPicker> {
             decoration: const InputDecoration(
               labelText: 'Town / Community Name',
               prefixIcon: Icon(Icons.edit_location_alt_outlined),
-              hintText: 'e.g. Small village name',
+              hintText: 'e.g. Tamale, Kumbungu, Savelugu...',
             ),
             onChanged: (_) => _notify(),
           ),
         ] else ...[
           DropdownButtonFormField<String>(
             isExpanded: true,
-            initialValue: _town,
+            value: _town,
             decoration: const InputDecoration(
               labelText: 'Town',
               prefixIcon: Icon(Icons.place_outlined),
             ),
-            items: towns
+            items: _townItems
                 .map((t) => DropdownMenuItem(
                       value: t,
                       child: Text(t, overflow: TextOverflow.ellipsis),
                     ))
                 .toList(),
-            onChanged: towns.isEmpty
+            onChanged: _townItems.isEmpty
                 ? null
                 : (v) => setState(() {
                       _town = v;

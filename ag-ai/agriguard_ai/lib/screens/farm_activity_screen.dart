@@ -6,6 +6,8 @@ import '../localization/app_localizations.dart';
 import '../services/auth_service.dart';
 import '../services/api_key_service.dart';
 import '../services/backend_service.dart';
+import '../services/location_service.dart';
+import '../services/location_session.dart';
 import '../services/weather_service.dart';
 import '../utils/app_theme.dart';
 import '../utils/ghana_locations.dart';
@@ -73,19 +75,52 @@ class _FarmActivityScreenState extends State<FarmActivityScreen> {
     _recordDate = DateTime.now();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadActivities();
-      // Auto-fetch weather if the farmer already has a saved region
-      final user = context.read<AuthService>().currentUser;
-      if (user?.region != null) {
-        _region = user!.region;
-        _fetchWeather(_region!);
-      }
+      _autoFetchWeather();
     });
   }
 
-  Future<void> _fetchWeather(String region) async {
-    final coords = coordsForRegion(region);
-    if (coords == null) return;
+  /// GPS-first weather fetch: tries device location, then session cache,
+  /// then falls back to the user's saved region coordinates.
+  Future<void> _autoFetchWeather() async {
+    // 1. Already have GPS coords from a previous screen visit
+    final session = context.read<LocationSession>();
+    if (session.hasCoordinates) {
+      final loc = session.current!;
+      if (loc.region != null) _region = loc.region;
+      await _fetchWeatherByCoords(
+        loc.latitude!,
+        loc.longitude!,
+        loc.region ?? 'Your Location',
+      );
+      return;
+    }
 
+    // 2. Try live GPS
+    try {
+      final loc = await LocationService().detectCurrentLocation();
+      if (!mounted) return;
+      if (loc.latitude != null && loc.longitude != null) {
+        if (loc.region != null) _region = loc.region;
+        context.read<LocationSession>().setLocation(loc);
+        await _fetchWeatherByCoords(
+          loc.latitude!,
+          loc.longitude!,
+          loc.region ?? 'Your Location',
+        );
+        return;
+      }
+    } catch (_) {}
+
+    // 3. Fall back to user's saved region
+    final user = context.read<AuthService>().currentUser;
+    if (user?.region != null) {
+      _region = user!.region;
+      _fetchWeather(_region!);
+    }
+  }
+
+  Future<void> _fetchWeatherByCoords(
+      double lat, double lon, String label) async {
     final apiKeys = context.read<ApiKeyService>();
     final key = apiKeys.effectiveWeatherKey;
     if (key.isEmpty) {
@@ -94,16 +129,18 @@ class _FarmActivityScreenState extends State<FarmActivityScreen> {
       return;
     }
 
-    setState(() { _weatherLoading = true; _weatherStatus = 'Fetching weather for $region…'; });
+    setState(() {
+      _weatherLoading = true;
+      _weatherStatus = 'Fetching weather for $label…';
+    });
     try {
       final weather = await WeatherService().fetchWeather(
         apiKey: key,
-        latitude: coords.$1,
-        longitude: coords.$2,
-        locationLabel: region,
+        latitude: lat,
+        longitude: lon,
+        locationLabel: label,
       );
       if (!mounted) return;
-      // Only overwrite fields if they are still empty (don't clobber manual edits)
       if (_tempMinCtrl.text.isEmpty) {
         _tempMinCtrl.text =
             (weather.temperatureC - 4).clamp(-5, 50).toStringAsFixed(1);
@@ -112,8 +149,7 @@ class _FarmActivityScreenState extends State<FarmActivityScreen> {
         _tempMaxCtrl.text = weather.temperatureC.toStringAsFixed(1);
       }
       if (_rainfallCtrl.text.isEmpty) {
-        _rainfallCtrl.text =
-            weather.rainfallNext24hMm.toStringAsFixed(1);
+        _rainfallCtrl.text = weather.rainfallNext24hMm.toStringAsFixed(1);
       }
       setState(() {
         _weatherLoading = false;
@@ -127,6 +163,12 @@ class _FarmActivityScreenState extends State<FarmActivityScreen> {
         _weatherStatus = 'Could not fetch weather: $e';
       });
     }
+  }
+
+  Future<void> _fetchWeather(String region) async {
+    final coords = coordsForRegion(region);
+    if (coords == null) return;
+    await _fetchWeatherByCoords(coords.$1, coords.$2, region);
   }
 
   @override
