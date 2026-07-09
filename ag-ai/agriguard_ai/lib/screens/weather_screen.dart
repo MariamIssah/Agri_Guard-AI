@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../localization/app_localizations.dart';
 
@@ -9,11 +9,8 @@ import '../services/location_session.dart';
 import '../services/weather_service.dart';
 import '../utils/app_theme.dart';
 import '../utils/location_matcher.dart';
-import '../widgets/agri_info_card.dart';
 import '../widgets/weather_api_setup.dart';
 
-// Approximate centre-point coordinates for each of Ghana's 16 regions.
-// Used as GPS fallback when device location is unavailable.
 const _ghanaRegionCoords = <String, (double, double)>{
   'Greater Accra': (5.6037, -0.1870),
   'Ashanti': (6.6885, -1.6244),
@@ -143,22 +140,23 @@ class _WeatherScreenState extends State<WeatherScreen> {
     });
   }
 
-  Future<void> _refreshLocationAndWeather() async {
-    if (!mounted) return;
-    await _loadWeather();
-  }
-
   Future<void> _loadWeatherForRegion(String region) async {
     final coords = _ghanaRegionCoords[region];
     if (coords == null) return;
 
     final apiKeys = context.read<ApiKeyService>();
     if (!apiKeys.hasWeatherKey) {
-      setState(() { _needsApiKey = true; _error = null; });
+      setState(() {
+        _needsApiKey = true;
+        _error = null;
+      });
       return;
     }
 
-    setState(() { _loading = true; _error = null; });
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
     try {
       final weather = await _weatherService.fetchWeather(
         apiKey: apiKeys.effectiveWeatherKey,
@@ -167,19 +165,19 @@ class _WeatherScreenState extends State<WeatherScreen> {
         locationLabel: region,
       );
       if (!mounted) return;
-      setState(() { _weather = weather; _loading = false; });
+      setState(() {
+        _weather = weather;
+        _loading = false;
+      });
     } on WeatherException catch (e) {
       if (e.isInvalidKey) {
         await context.read<ApiKeyService>().clearOpenWeatherKey();
         if (!mounted) return;
-        setState(() { _loading = false; _needsApiKey = true; _error = null; });
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(e.message),
-            backgroundColor: AgriColors.danger,
-            duration: const Duration(seconds: 5),
-          ),
-        );
+        setState(() {
+          _loading = false;
+          _needsApiKey = true;
+          _error = null;
+        });
       } else {
         _handleError(e.message);
       }
@@ -195,7 +193,9 @@ class _WeatherScreenState extends State<WeatherScreen> {
     if (code.startsWith('11')) return Icons.thunderstorm_rounded;
     if (code.startsWith('13')) return Icons.ac_unit_rounded;
     if (code.startsWith('50')) return Icons.foggy;
-    if (code.startsWith('02') || code.startsWith('03') || code.startsWith('04')) {
+    if (code.startsWith('02') ||
+        code.startsWith('03') ||
+        code.startsWith('04')) {
       return Icons.wb_cloudy_rounded;
     }
     return Icons.wb_sunny_rounded;
@@ -210,22 +210,20 @@ class _WeatherScreenState extends State<WeatherScreen> {
           IconButton(
             icon: const Icon(Icons.key_outlined),
             tooltip: context.t('weather_change_key'),
-            onPressed: () {
-              setState(() {
-                _needsApiKey = true;
-                _error = null;
-              });
-            },
+            onPressed: () => setState(() {
+              _needsApiKey = true;
+              _error = null;
+            }),
           ),
           IconButton(
             icon: const Icon(Icons.my_location_rounded),
             tooltip: context.t('weather_refresh'),
-            onPressed: _loading ? null : _refreshLocationAndWeather,
+            onPressed: _loading ? null : _loadWeather,
           ),
         ],
       ),
       body: RefreshIndicator(
-        onRefresh: _refreshLocationAndWeather,
+        onRefresh: _loadWeather,
         color: AgriColors.forestGreen,
         child: _loading
             ? ListView(
@@ -234,11 +232,7 @@ class _WeatherScreenState extends State<WeatherScreen> {
                   const SizedBox(height: 120),
                   const Center(child: CircularProgressIndicator()),
                   const SizedBox(height: 16),
-                  Center(
-                    child: Text(
-                      context.t('weather_detecting'),
-                    ),
-                  ),
+                  Center(child: Text(context.t('weather_detecting'))),
                 ],
               )
             : _needsApiKey
@@ -251,34 +245,31 @@ class _WeatherScreenState extends State<WeatherScreen> {
   }
 
   Widget _errorView() {
-    final botPad = MediaQuery.viewPaddingOf(context).bottom;
     return _RegionFallbackView(
       error: _error!,
-      onRetryGps: _refreshLocationAndWeather,
+      onRetryGps: _loadWeather,
       onRegionSelected: _loadWeatherForRegion,
-      bottomPad: botPad,
+      bottomPad: MediaQuery.viewPaddingOf(context).bottom,
       tryAgainLabel: context.t('weather_try_again'),
     );
   }
 
-  Widget _weatherView(WeatherData weather) {
+  Widget _weatherView(WeatherData w) {
     final session = context.watch<LocationSession>();
     final coords = session.current;
     final botPad = MediaQuery.viewPaddingOf(context).bottom;
 
     return ListView(
       physics: const AlwaysScrollableScrollPhysics(),
-      padding: EdgeInsets.fromLTRB(20, 20, 20, botPad + 20),
+      padding: EdgeInsets.fromLTRB(16, 16, 16, botPad + 20),
       children: [
+        // ── Hero banner ─────────────────────────────────────────────────────
         Container(
           width: double.infinity,
           padding: const EdgeInsets.all(24),
           decoration: BoxDecoration(
-            gradient: LinearGradient(
-              colors: [
-                AgriColors.sky,
-                AgriColors.sky.withValues(alpha: 0.80),
-              ],
+            gradient: const LinearGradient(
+              colors: [Color(0xFF1565C0), Color(0xFF42A5F5)],
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
             ),
@@ -286,124 +277,281 @@ class _WeatherScreenState extends State<WeatherScreen> {
           ),
           child: Column(
             children: [
-              Icon(_weatherIcon(weather.iconCode), size: 64, color: Colors.white),
-              const SizedBox(height: 12),
+              Icon(_weatherIcon(w.iconCode), size: 64, color: Colors.white),
+              const SizedBox(height: 8),
               Text(
-                '${weather.temperatureC.round()}Â°C',
+                '${w.temperatureC.round()}°C',
                 style: const TextStyle(
-                  fontSize: 48,
+                  fontSize: 52,
                   fontWeight: FontWeight.bold,
                   color: Colors.white,
                 ),
               ),
               Text(
-                '${weather.description} · ${weather.locationLabel}',
-                textAlign: TextAlign.center,
+                w.description,
                 style: TextStyle(
                   color: Colors.white.withValues(alpha: 0.9),
-                  fontSize: 15,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w500,
                 ),
               ),
-              if (coords?.latitude != null && coords?.longitude != null) ...[
-                const SizedBox(height: 6),
+              const SizedBox(height: 4),
+              Text(
+                w.locationLabel,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.8),
+                  fontSize: 13,
+                ),
+              ),
+              const SizedBox(height: 12),
+              // Min / Max / Feels like row
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                  _heroBadge('Low', '${w.tempMinC.round()}°C'),
+                  _heroBadge('Feels like', '${w.feelsLikeC.round()}°C'),
+                  _heroBadge('High', '${w.tempMaxC.round()}°C'),
+                ],
+              ),
+              if (coords?.latitude != null) ...[
+                const SizedBox(height: 8),
                 Text(
-                  'GPS: ${coords!.latitude!.toStringAsFixed(4)}, '
-                  '${coords.longitude!.toStringAsFixed(4)}',
+                  'GPS ${coords!.latitude!.toStringAsFixed(3)}, '
+                  '${coords.longitude!.toStringAsFixed(3)}',
                   style: TextStyle(
-                    color: Colors.white.withValues(alpha: 0.75),
-                    fontSize: 12,
+                    color: Colors.white.withValues(alpha: 0.6),
+                    fontSize: 11,
                   ),
                 ),
               ],
-              const SizedBox(height: 8),
+              const SizedBox(height: 4),
               Text(
-                'Updated: ${_formatTime(weather.updatedAt)} · OpenWeather',
+                'Updated ${_hm(w.updatedAt)} · OpenWeather',
                 style: TextStyle(
-                  color: Colors.white.withValues(alpha: 0.7),
-                  fontSize: 12,
+                  color: Colors.white.withValues(alpha: 0.6),
+                  fontSize: 11,
                 ),
               ),
             ],
           ),
         ),
-        const SizedBox(height: 24),
-        Text(
-          'Current Conditions',
-          style: TextStyle(
-            fontSize: 17,
-            fontWeight: FontWeight.w600,
-            color: Theme.of(context).colorScheme.onSurface,
-          ),
-        ),
+        const SizedBox(height: 20),
+
+        // ── Sunrise / Sunset strip ──────────────────────────────────────────
+        if (w.sunriseTime != null && w.sunsetTime != null)
+          _sunStrip(w.sunriseTime!, w.sunsetTime!),
+
+        const SizedBox(height: 20),
+        _sectionHeader('Current Conditions'),
         const SizedBox(height: 12),
-        AgriInfoCard(
-          title: 'Temperature',
-          value: '${weather.temperatureC.round()}Â°C',
-          subtitle: 'Feels like ${weather.feelsLikeC.round()}Â°C',
+
+        // ── Temperature detail card ─────────────────────────────────────────
+        _DetailCard(
           icon: Icons.thermostat_rounded,
-          accentColor: AgriColors.dangerRed,
+          color: AgriColors.dangerRed,
+          title: 'Temperature',
+          value: '${w.temperatureC.round()}°C',
+          rows: [
+            _Row('Feels like', '${w.feelsLikeC.round()}°C'),
+            _Row('Today range', '${w.tempMinC.round()}°C – ${w.tempMaxC.round()}°C'),
+          ],
+          context: w.temperatureContext,
         ),
         const SizedBox(height: 10),
-        AgriInfoCard(
-          title: 'Humidity',
-          value: '${weather.humidity}%',
-          subtitle: weather.humidity >= 70 ? 'High moisture' : 'Moderate moisture',
+
+        // ── Humidity detail card ────────────────────────────────────────────
+        _DetailCard(
           icon: Icons.water_drop_rounded,
-          accentColor: AgriColors.skyBlue,
+          color: AgriColors.skyBlue,
+          title: 'Humidity',
+          value: '${w.humidity}%',
+          rows: [
+            _Row('Level', _humidityLabel(w.humidity)),
+          ],
+          context: w.humidityContext,
+          severity: _humiditySeverity(w.humidity),
         ),
         const SizedBox(height: 10),
-        AgriInfoCard(
-          title: 'Rainfall',
-          value: '${weather.rainfallNext24hMm.toStringAsFixed(1)} mm',
-          subtitle: 'Expected in next 24 hrs',
+
+        // ── Rainfall detail card ────────────────────────────────────────────
+        _DetailCard(
           icon: Icons.grain_rounded,
-          accentColor: AgriColors.leafGreen,
+          color: const Color(0xFF1E88E5),
+          title: 'Rainfall (Next 24h)',
+          value: '${w.rainfallNext24hMm.toStringAsFixed(1)} mm',
+          rows: [
+            _Row('Intensity', _rainLabel(w.rainfallNext24hMm)),
+          ],
+          context: w.rainfallContext,
+          severity: _rainSeverity(w.rainfallNext24hMm),
         ),
         const SizedBox(height: 10),
-        AgriInfoCard(
-          title: 'Wind Speed',
-          value: '${weather.windSpeedKmh.round()} km/h',
-          subtitle: 'From ${weather.windDirection}',
+
+        // ── Wind detail card ────────────────────────────────────────────────
+        _DetailCard(
           icon: Icons.air_rounded,
-          accentColor: AgriColors.wheatGold,
+          color: AgriColors.wheatGold,
+          title: 'Wind',
+          value: '${w.windSpeedKmh.round()} km/h',
+          rows: [
+            _Row('Direction', 'From ${w.windDirection}'),
+            _Row('Condition', _windLabel(w.windSpeedKmh)),
+          ],
+          context: w.windContext,
+          severity: _windSeverity(w.windSpeedKmh),
         ),
+        const SizedBox(height: 10),
+
+        // ── Cloud cover card ────────────────────────────────────────────────
+        _DetailCard(
+          icon: Icons.wb_cloudy_rounded,
+          color: const Color(0xFF78909C),
+          title: 'Cloud Cover',
+          value: '${w.cloudCoverPct}%',
+          rows: [
+            _Row('Sky', _cloudLabel(w.cloudCoverPct)),
+          ],
+          context: w.cloudContext,
+        ),
+        const SizedBox(height: 10),
+
+        // ── Pressure & Visibility row ───────────────────────────────────────
+        Row(
+          children: [
+            Expanded(
+              child: _MiniCard(
+                icon: Icons.speed_rounded,
+                color: const Color(0xFF7B1FA2),
+                title: 'Pressure',
+                value: '${w.pressureHpa} hPa',
+                note: w.pressureContext,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: _MiniCard(
+                icon: Icons.visibility_rounded,
+                color: const Color(0xFF00796B),
+                title: 'Visibility',
+                value: '${w.visibilityKm.toStringAsFixed(1)} km',
+                note: w.visibilityKm >= 8
+                    ? 'Clear visibility'
+                    : w.visibilityKm >= 4
+                        ? 'Reduced — possible haze or fog'
+                        : 'Poor — foggy or dusty conditions',
+              ),
+            ),
+          ],
+        ),
+
         const SizedBox(height: 24),
-        Text(
-          'Farming Advisory',
-          style: TextStyle(
-            fontSize: 17,
-            fontWeight: FontWeight.w600,
-            color: Theme.of(context).colorScheme.onSurface,
-          ),
-        ),
+        _sectionHeader('Farming Advisory'),
         const SizedBox(height: 12),
+
         Card(
+          elevation: 2,
+          shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14)),
           child: Padding(
             padding: const EdgeInsets.all(16),
             child: Column(
               children: [
-                for (var i = 0; i < weather.farmingAdvisories.length; i++) ...[
-                  if (i > 0) const Divider(height: 24),
+                for (var i = 0; i < w.farmingAdvisories.length; i++) ...[
+                  if (i > 0) const Divider(height: 20),
                   _advisoryRow(
                     i == 0
-                        ? Icons.check_circle_outline
+                        ? Icons.check_circle_outline_rounded
                         : Icons.tips_and_updates_outlined,
                     i == 0 ? AgriColors.leafGreen : AgriColors.forestGreen,
-                    weather.farmingAdvisories[i],
+                    w.farmingAdvisories[i],
                   ),
                 ],
               ],
             ),
           ),
         ),
+        const SizedBox(height: 8),
       ],
     );
   }
 
-  String _formatTime(DateTime time) {
-    final h = time.hour.toString().padLeft(2, '0');
-    final m = time.minute.toString().padLeft(2, '0');
-    return '$h:$m';
+  // ── Helpers ──────────────────────────────────────────────────────────────
+
+  Widget _heroBadge(String label, String value) {
+    return Column(
+      children: [
+        Text(
+          value,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 16,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        Text(
+          label,
+          style: TextStyle(
+            color: Colors.white.withValues(alpha: 0.7),
+            fontSize: 11,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _sunStrip(DateTime sunrise, DateTime sunset) {
+    final daylight = sunset.difference(sunrise);
+    final h = daylight.inHours;
+    final m = daylight.inMinutes % 60;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF8E1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFFFE082)),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+        children: [
+          _sunItem(Icons.wb_twilight_rounded, 'Sunrise', _hm(sunrise),
+              const Color(0xFFFF8F00)),
+          Container(width: 1, height: 32, color: const Color(0xFFFFE082)),
+          _sunItem(Icons.nights_stay_rounded, 'Sunset', _hm(sunset),
+              const Color(0xFF5C6BC0)),
+          Container(width: 1, height: 32, color: const Color(0xFFFFE082)),
+          _sunItem(Icons.wb_sunny_outlined, 'Daylight', '${h}h ${m}m',
+              const Color(0xFFFFA000)),
+        ],
+      ),
+    );
+  }
+
+  Widget _sunItem(IconData icon, String label, String value, Color color) {
+    return Column(
+      children: [
+        Icon(icon, color: color, size: 20),
+        const SizedBox(height: 2),
+        Text(value,
+            style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: color)),
+        Text(label,
+            style: const TextStyle(fontSize: 11, color: Color(0xFF795548))),
+      ],
+    );
+  }
+
+  Widget _sectionHeader(String text) {
+    return Text(
+      text,
+      style: TextStyle(
+        fontSize: 17,
+        fontWeight: FontWeight.w700,
+        color: Theme.of(context).colorScheme.onSurface,
+      ),
+    );
   }
 
   Widget _advisoryRow(IconData icon, Color color, String text) {
@@ -418,16 +566,264 @@ class _WeatherScreenState extends State<WeatherScreen> {
             style: TextStyle(
               color: Theme.of(context).colorScheme.onSurface,
               fontSize: 14,
-              height: 1.4,
+              height: 1.45,
             ),
           ),
         ),
       ],
     );
   }
+
+  String _hm(DateTime dt) {
+    final h = dt.hour.toString().padLeft(2, '0');
+    final m = dt.minute.toString().padLeft(2, '0');
+    return '$h:$m';
+  }
+
+  // ── Label helpers ─────────────────────────────────────────────────────────
+
+  String _humidityLabel(int h) {
+    if (h >= 85) return 'Very high';
+    if (h >= 70) return 'High';
+    if (h >= 50) return 'Moderate';
+    if (h >= 30) return 'Low';
+    return 'Very low';
+  }
+
+  String _rainLabel(double mm) {
+    if (mm >= 20) return 'Heavy rain';
+    if (mm >= 10) return 'Moderate rain';
+    if (mm >= 3) return 'Light rain';
+    if (mm >= 1) return 'Very light rain';
+    return 'No rain expected';
+  }
+
+  String _windLabel(double kmh) {
+    if (kmh >= 40) return 'Strong wind';
+    if (kmh >= 25) return 'Moderate wind';
+    if (kmh >= 10) return 'Light breeze';
+    return 'Calm';
+  }
+
+  String _cloudLabel(int pct) {
+    if (pct >= 80) return 'Overcast';
+    if (pct >= 50) return 'Mostly cloudy';
+    if (pct >= 20) return 'Partly cloudy';
+    return 'Clear sky';
+  }
+
+  // 0 = normal, 1 = warning, 2 = alert
+  int _humiditySeverity(int h) => h >= 80 ? 2 : h >= 70 ? 1 : 0;
+  int _rainSeverity(double mm) => mm >= 10 ? 2 : mm >= 3 ? 1 : 0;
+  int _windSeverity(double kmh) => kmh >= 40 ? 2 : kmh >= 25 ? 1 : 0;
 }
 
-// â”€â”€ Manual region fallback view â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Detail card ─────────────────────────────────────────────────────────────
+
+class _Row {
+  const _Row(this.label, this.value);
+  final String label;
+  final String value;
+}
+
+class _DetailCard extends StatelessWidget {
+  const _DetailCard({
+    required this.icon,
+    required this.color,
+    required this.title,
+    required this.value,
+    required this.rows,
+    required this.context,
+    this.severity = 0,
+  });
+
+  final IconData icon;
+  final Color color;
+  final String title;
+  final String value;
+  final List<_Row> rows;
+  final String context;
+  final int severity; // 0 = ok, 1 = warning, 2 = alert
+
+  @override
+  Widget build(BuildContext ctx) {
+    final bg = Theme.of(ctx).cardColor;
+    final severityColor = severity == 2
+        ? const Color(0xFFE53935)
+        : severity == 1
+            ? const Color(0xFFFFA726)
+            : AgriColors.leafGreen;
+
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.1),
+              borderRadius:
+                  const BorderRadius.vertical(top: Radius.circular(14)),
+            ),
+            child: Row(
+              children: [
+                Icon(icon, color: color, size: 22),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    title,
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: color,
+                    ),
+                  ),
+                ),
+                Text(
+                  value,
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                    color: color,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          // Detail rows
+          Padding(
+            padding:
+                const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                for (final r in rows) ...[
+                  Row(
+                    children: [
+                      SizedBox(
+                        width: 90,
+                        child: Text(
+                          r.label,
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: Theme.of(ctx)
+                                .colorScheme
+                                .onSurfaceVariant,
+                          ),
+                        ),
+                      ),
+                      Text(
+                        r.value,
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                ],
+                const Divider(height: 14),
+                // Farming context note
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(Icons.eco_rounded,
+                        size: 15, color: severityColor),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        context,
+                        style: TextStyle(
+                          fontSize: 12.5,
+                          color:
+                              Theme.of(ctx).colorScheme.onSurface,
+                          height: 1.4,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Mini card (Pressure / Visibility) ────────────────────────────────────────
+
+class _MiniCard extends StatelessWidget {
+  const _MiniCard({
+    required this.icon,
+    required this.color,
+    required this.title,
+    required this.value,
+    required this.note,
+  });
+
+  final IconData icon;
+  final Color color;
+  final String title;
+  final String value;
+  final String note;
+
+  @override
+  Widget build(BuildContext ctx) {
+    return Card(
+      elevation: 2,
+      shape:
+          RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(icon, color: color, size: 18),
+                const SizedBox(width: 6),
+                Text(
+                  title,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: color,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text(
+              value,
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: Theme.of(ctx).colorScheme.onSurface,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              note,
+              style: TextStyle(
+                fontSize: 11.5,
+                color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                height: 1.35,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ── Region fallback ───────────────────────────────────────────────────────────
 
 class _RegionFallbackView extends StatefulWidget {
   const _RegionFallbackView({
@@ -457,7 +853,8 @@ class _RegionFallbackViewState extends State<_RegionFallbackView> {
 
     return ListView(
       physics: const AlwaysScrollableScrollPhysics(),
-      padding: EdgeInsets.fromLTRB(24, 24, 24, widget.bottomPad + 24),
+      padding:
+          EdgeInsets.fromLTRB(24, 24, 24, widget.bottomPad + 24),
       children: [
         const Icon(Icons.location_off_rounded,
             size: 56, color: AgriColors.danger),
@@ -466,7 +863,8 @@ class _RegionFallbackViewState extends State<_RegionFallbackView> {
           widget.error,
           textAlign: TextAlign.center,
           style: TextStyle(
-              color: Theme.of(context).colorScheme.onSurface, height: 1.5),
+              color: Theme.of(context).colorScheme.onSurface,
+              height: 1.5),
         ),
         const SizedBox(height: 20),
         ElevatedButton.icon(
@@ -480,22 +878,22 @@ class _RegionFallbackViewState extends State<_RegionFallbackView> {
         Text(
           'Or select your Ghana region manually',
           textAlign: TextAlign.center,
-          style: Theme.of(context)
-              .textTheme
-              .titleSmall
-              ?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
+          style: Theme.of(context).textTheme.titleSmall?.copyWith(
+              color: Theme.of(context).colorScheme.onSurfaceVariant),
         ),
         const SizedBox(height: 16),
         DropdownButtonFormField<String>(
           isExpanded: true,
-          // ignore: deprecated_member_use
           value: _selectedRegion,
           decoration: const InputDecoration(
             labelText: 'Region',
             prefixIcon: Icon(Icons.map_outlined),
           ),
           items: regions
-              .map((r) => DropdownMenuItem(value: r, child: Text(r, overflow: TextOverflow.ellipsis)))
+              .map((r) => DropdownMenuItem(
+                  value: r,
+                  child:
+                      Text(r, overflow: TextOverflow.ellipsis)))
               .toList(),
           onChanged: (v) => setState(() => _selectedRegion = v),
         ),
@@ -509,12 +907,12 @@ class _RegionFallbackViewState extends State<_RegionFallbackView> {
             icon: const Icon(Icons.wb_sunny_rounded),
             label: const Text('Load Weather for Region'),
             style: ElevatedButton.styleFrom(
-                backgroundColor: AgriColors.forestGreen,
-                foregroundColor: Colors.white),
+              backgroundColor: AgriColors.forestGreen,
+              foregroundColor: Colors.white,
+            ),
           ),
         ),
       ],
     );
   }
 }
-

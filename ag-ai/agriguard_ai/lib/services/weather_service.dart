@@ -72,6 +72,8 @@ class WeatherService {
     final wind = current['wind'] as Map<String, dynamic>? ?? {};
     final weatherList = current['weather'] as List<dynamic>;
     final weather = weatherList.first as Map<String, dynamic>;
+    final clouds = current['clouds'] as Map<String, dynamic>? ?? {};
+    final sys = current['sys'] as Map<String, dynamic>? ?? {};
 
     final rainNext24h = _sumForecastRain(forecast);
 
@@ -81,15 +83,36 @@ class WeatherService {
 
     final windDeg = (wind['deg'] as num?)?.toDouble() ?? 0;
 
+    DateTime? sunrise;
+    DateTime? sunset;
+    final sunriseEpoch = sys['sunrise'] as int?;
+    final sunsetEpoch = sys['sunset'] as int?;
+    if (sunriseEpoch != null) {
+      sunrise = DateTime.fromMillisecondsSinceEpoch(sunriseEpoch * 1000);
+    }
+    if (sunsetEpoch != null) {
+      sunset = DateTime.fromMillisecondsSinceEpoch(sunsetEpoch * 1000);
+    }
+
     return WeatherData(
       temperatureC: (main['temp'] as num).toDouble(),
       feelsLikeC: (main['feels_like'] as num).toDouble(),
+      tempMinC: (main['temp_min'] as num?)?.toDouble() ??
+          (main['temp'] as num).toDouble(),
+      tempMaxC: (main['temp_max'] as num?)?.toDouble() ??
+          (main['temp'] as num).toDouble(),
       humidity: (main['humidity'] as num).round(),
       windSpeedKmh: ((wind['speed'] as num?)?.toDouble() ?? 0) * 3.6,
       windDirection: windDirectionFromDegrees(windDeg),
       description: _capitalize(weather['description'] as String? ?? ''),
       locationLabel: label,
       rainfallNext24hMm: rainNext24h,
+      pressureHpa: (main['pressure'] as num?)?.round() ?? 1013,
+      cloudCoverPct: (clouds['all'] as num?)?.round() ?? 0,
+      visibilityKm:
+          ((current['visibility'] as num?)?.toDouble() ?? 10000) / 1000,
+      sunriseTime: sunrise,
+      sunsetTime: sunset,
       updatedAt: DateTime.now(),
       iconCode: weather['icon'] as String? ?? '01d',
     );
