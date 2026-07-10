@@ -5,7 +5,7 @@
 **Institution:** African Leadership University (ALU)  
 **Demo Video:** [Watch on YouTube](https://youtu.be/tvJdTJLd4-U)  
 **Live API:** https://agriguard-ai-production.up.railway.app  
-**APK Download:** [AgriGuard-AI.apk](AgriGuard-AI.apk)  
+**APK Download:** [AgriGuard-AI.apk](ag-ai/AgriGuard-AI.apk)  
 **GitHub Repo:** https://github.com/MariamIssah/Agri_Guard-AI
 
 ---
