@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../config/api_config.dart';
 import '../models/user_model.dart';
 import '../models/user_role.dart';
 import 'backend_service.dart';
@@ -66,6 +68,58 @@ class AuthService extends ChangeNotifier {
     } catch (e) {
       throw AuthException('Registration failed. Check your connection and try again.');
     }
+  }
+
+  /// Sign in with Google. Returns `true` if the account is brand-new
+  /// (so the caller can prompt the user to pick a role).
+  Future<bool> loginWithGoogle() async {
+    final googleSignIn = GoogleSignIn(
+      scopes: ['email', 'profile'],
+      serverClientId: ApiConfig.googleWebClientId.isNotEmpty
+          ? ApiConfig.googleWebClientId
+          : null,
+    );
+    GoogleSignInAccount? account;
+    try {
+      account = await googleSignIn.signIn();
+    } catch (e) {
+      throw AuthException('Google sign-in failed: $e');
+    }
+    if (account == null) throw AuthException('Google sign-in was cancelled.');
+
+    final auth = await account.authentication;
+    final idToken = auth.idToken;
+    if (idToken == null) {
+      throw AuthException(
+          'Could not get Google ID token. Make sure your OAuth client ID is configured.');
+    }
+
+    try {
+      final res = await _backend.authGoogle(idToken);
+      final user = UserModel.fromJson(res['user'] as Map<String, dynamic>);
+      await _saveSession(user);
+      return res['is_new'] as bool? ?? false;
+    } on BackendException catch (e) {
+      throw AuthException(e.message);
+    } catch (e) {
+      throw AuthException('Google sign-in failed. Check your connection.');
+    }
+  }
+
+  Future<void> updateRole(UserRole role) async {
+    final user = _currentUser;
+    if (user == null) return;
+    try {
+      await _backend.updateRole(user.id, role.name);
+    } on BackendException catch (e) {
+      throw AuthException(e.message);
+    }
+    // Rebuild saved session with new role
+    final updated = UserModel.fromJson({
+      ...user.toJson(),
+      'role': role.name,
+    });
+    await _saveSession(updated);
   }
 
   Future<void> login({required String email, required String password}) async {

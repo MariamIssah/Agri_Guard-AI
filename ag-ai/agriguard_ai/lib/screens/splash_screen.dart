@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../services/auth_service.dart';
 import '../services/user_session.dart';
 import '../utils/app_theme.dart';
+import 'consent_screen.dart';
 import 'login_screen.dart';
 import 'main_shell.dart';
 
@@ -36,14 +38,26 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
     super.dispose();
   }
 
-  void _navigate() {
+  Future<void> _navigate() async {
     if (!mounted) return;
+    final prefs = await SharedPreferences.getInstance();
+    final consentGiven = prefs.getBool('consent_given') ?? false;
+    if (!mounted) return;
+
+    if (!consentGiven) {
+      Navigator.pushReplacement(
+          context, MaterialPageRoute(builder: (_) => const ConsentScreen()));
+      return;
+    }
+
     final auth = context.read<AuthService>();
     if (auth.isLoggedIn) {
       context.read<UserSession>().setRole(auth.currentUser!.role);
-      Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const MainShell()));
+      Navigator.pushReplacement(
+          context, MaterialPageRoute(builder: (_) => const MainShell()));
     } else {
-      Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const LoginScreen()));
+      Navigator.pushReplacement(
+          context, MaterialPageRoute(builder: (_) => const LoginScreen()));
     }
   }
 

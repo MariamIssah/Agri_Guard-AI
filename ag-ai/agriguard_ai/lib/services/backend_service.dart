@@ -40,6 +40,27 @@ class BackendService {
     return _handleResponse(response);
   }
 
+  Future<Map<String, dynamic>> resetPassword({
+    required String email,
+    required String name,
+    required String newPassword,
+  }) =>
+      _post('/api/auth/reset-password', {
+        'email':        email.trim(),
+        'name':         name.trim(),
+        'new_password': newPassword,
+      });
+
+  Future<Map<String, dynamic>> authGoogle(String idToken) =>
+      _post('/api/auth/google', {'id_token': idToken});
+
+  Future<void> updateRole(String userId, String role) async {
+    final uri = _ep('/api/auth/role')
+        .replace(queryParameters: {'user_id': userId, 'role': role});
+    final response = await http.patch(uri).timeout(const Duration(seconds: 10));
+    _handleResponse(response);
+  }
+
   // ── Farm diary ────────────────────────────────────────────────────────────
   Future<Map<String, dynamic>> submitDiaryEntry(Map<String, dynamic> payload) =>
       _post('/api/diary', payload);
@@ -280,16 +301,17 @@ class BackendService {
   }
 
   // ── Model retraining (admin / authorised trigger) ─────────────────────────
-  Future<Map<String, dynamic>> triggerRetrain({
-    String? historicalPath,
-    String? submissionsPath,
-    String? outputPath,
-  }) async {
-    final body = <String, dynamic>{};
-    if (historicalPath != null) body['historical_path'] = historicalPath;
-    if (submissionsPath != null) body['submissions_path'] = submissionsPath;
-    if (outputPath != null) body['output_path'] = outputPath;
-    return _post('/api/retrain', body);
+  Future<Map<String, dynamic>> triggerRetrain() async {
+    final uri = _ep('/api/admin/retrain')
+        .replace(queryParameters: {'admin_key': _adminKey});
+    final response = await http.post(uri).timeout(const Duration(minutes: 5));
+    return _handleResponse(response);
+  }
+
+  Future<Map<String, dynamic>> retrainHistory() async {
+    final uri = _ep('/api/admin/retrain-history')
+        .replace(queryParameters: {'admin_key': _adminKey});
+    return _get(uri);
   }
 
   // ── Health check ──────────────────────────────────────────────────────────

@@ -8,6 +8,8 @@ import '../utils/app_theme.dart';
 import '../utils/ghana_locations.dart';
 import 'my_submissions_screen.dart';
 
+const _kOther = '__other__';
+
 class PredictionScreen extends StatelessWidget {
   const PredictionScreen({super.key});
 
@@ -69,16 +71,22 @@ class _FarmerPreHarvestTabState extends State<_FarmerPreHarvestTab> {
   final _formKey = GlobalKey<FormState>();
   final _cropCtrl = TextEditingController();
   final _areaCtrl = TextEditingController();
+  final _districtCtrl = TextEditingController();
   String? _region;
   String? _district;
   bool _loading = false;
   Map<String, dynamic>? _result;
   String? _error;
 
+  String? get _effectiveDistrict => _district == _kOther
+      ? (_districtCtrl.text.trim().isEmpty ? null : _districtCtrl.text.trim())
+      : _district;
+
   @override
   void dispose() {
     _cropCtrl.dispose();
     _areaCtrl.dispose();
+    _districtCtrl.dispose();
     super.dispose();
   }
 
@@ -96,7 +104,7 @@ class _FarmerPreHarvestTabState extends State<_FarmerPreHarvestTab> {
         'crop': _cropCtrl.text.trim(),
         'region': _region!,
         'area_hectares': double.parse(_areaCtrl.text.trim()),
-        if (_district != null) 'district': _district,
+        if (_effectiveDistrict != null) 'district': _effectiveDistrict,
         'year': DateTime.now().year,
       });
       setState(() => _result = res);
@@ -155,25 +163,57 @@ class _FarmerPreHarvestTabState extends State<_FarmerPreHarvestTab> {
               onChanged: (v) => setState(() {
                 _region = v;
                 _district = null;
+                _districtCtrl.clear();
               }),
               validator: (v) => v == null ? 'Select a region' : null,
             ),
             const SizedBox(height: 14),
 
-            if (districts.isNotEmpty) ...[
+            if (_region != null) ...[
               DropdownButtonFormField<String>(
                 isExpanded: true,
-                // ignore: deprecated_member_use
                 value: _district,
                 decoration: const InputDecoration(
                   labelText: 'District (optional)',
                   prefixIcon: Icon(Icons.location_city_outlined),
+                  helperText: 'Choose from list or select "Other" to type yours',
                 ),
-                items: districts
-                    .map((d) => DropdownMenuItem(value: d, child: Text(d, overflow: TextOverflow.ellipsis)))
-                    .toList(),
-                onChanged: (v) => setState(() => _district = v),
+                items: [
+                  const DropdownMenuItem<String>(
+                      value: null, child: Text('Skip — no specific district')),
+                  ...districts.map((d) => DropdownMenuItem(
+                      value: d, child: Text(d, overflow: TextOverflow.ellipsis))),
+                  DropdownMenuItem(
+                    value: _kOther,
+                    child: Row(children: [
+                      Icon(Icons.edit_outlined,
+                          size: 16, color: Theme.of(context).colorScheme.primary),
+                      const SizedBox(width: 6),
+                      Text('Other — type your district',
+                          style: TextStyle(
+                            color: Theme.of(context).colorScheme.primary,
+                            fontStyle: FontStyle.italic,
+                          )),
+                    ]),
+                  ),
+                ],
+                onChanged: (v) => setState(() {
+                  _district = v;
+                  _districtCtrl.clear();
+                }),
               ),
+              if (_district == _kOther) ...[
+                const SizedBox(height: 10),
+                TextFormField(
+                  controller: _districtCtrl,
+                  decoration: const InputDecoration(
+                    labelText: 'District / Municipality name',
+                    prefixIcon: Icon(Icons.location_city_outlined),
+                    hintText: 'e.g. Kumbungu District, Nkoranza North…',
+                  ),
+                  textCapitalization: TextCapitalization.words,
+                ),
+              ],
               const SizedBox(height: 14),
             ],
 
@@ -246,17 +286,25 @@ class _FarmerPostHarvestTabState extends State<_FarmerPostHarvestTab> {
   final _priceCtrl      = TextEditingController();
   final _qualityCtrl    = TextEditingController();
   final _notesCtrl      = TextEditingController();
+  final _districtCtrl   = TextEditingController();
   String? _region;
   String? _district;
   bool _loading = false;
+  bool _consentMarket = false;
+  bool _consentTraining = false;
   Map<String, dynamic>? _result;
   String? _error;
+
+  String? get _effectiveDistrict => _district == _kOther
+      ? (_districtCtrl.text.trim().isEmpty ? null : _districtCtrl.text.trim())
+      : _district;
 
   @override
   void dispose() {
     for (final c in [
       _cropCtrl, _areaCtrl, _actualKgCtrl, _phoneCtrl,
       _townCtrl, _qtyForSaleCtrl, _priceCtrl, _qualityCtrl, _notesCtrl,
+      _districtCtrl,
     ]) {
       c.dispose();
     }
@@ -270,15 +318,17 @@ class _FarmerPostHarvestTabState extends State<_FarmerPostHarvestTab> {
       final user = context.read<AuthService>().currentUser;
       final actualKg = double.parse(_actualKgCtrl.text.trim());
       final res = await widget.backend.submitPostHarvest({
-        'farmer_id':      user?.id ?? 'guest',
-        'crop':           _cropCtrl.text.trim(),
-        'region':         _region!,
-        'area_hectares':  double.parse(_areaCtrl.text.trim()),
-        'actual_yield_kg': actualKg,
-        if (_district != null) 'district': _district,
-        if (_phoneCtrl.text.trim().isNotEmpty)
+        'farmer_id':        user?.id ?? 'guest',
+        'crop':             _cropCtrl.text.trim(),
+        'region':           _region!,
+        'area_hectares':    double.parse(_areaCtrl.text.trim()),
+        'actual_yield_kg':  actualKg,
+        'consent_market':   _consentMarket,
+        'consent_training': _consentTraining,
+        if (_effectiveDistrict != null) 'district': _effectiveDistrict,
+        if (_consentMarket && _phoneCtrl.text.trim().isNotEmpty)
           'phone': _phoneCtrl.text.trim(),
-        if (_townCtrl.text.trim().isNotEmpty)
+        if (_consentMarket && _townCtrl.text.trim().isNotEmpty)
           'town': _townCtrl.text.trim(),
         'quantity_available_kg': _qtyForSaleCtrl.text.trim().isNotEmpty
             ? double.tryParse(_qtyForSaleCtrl.text.trim()) ?? actualKg
@@ -349,24 +399,56 @@ class _FarmerPostHarvestTabState extends State<_FarmerPostHarvestTab> {
               items: GhanaLocations.regions
                   .map((r) => DropdownMenuItem(value: r, child: Text(r, overflow: TextOverflow.ellipsis)))
                   .toList(),
-              onChanged: (v) => setState(() { _region = v; _district = null; }),
+              onChanged: (v) => setState(() { _region = v; _district = null; _districtCtrl.clear(); }),
               validator: (v) => v == null ? 'Select a region' : null,
             ),
             const SizedBox(height: 14),
 
-            if (districts.isNotEmpty) ...[
+            if (_region != null) ...[
               DropdownButtonFormField<String>(
                 isExpanded: true,
                 value: _district,
                 decoration: const InputDecoration(
                   labelText: 'District (optional)',
                   prefixIcon: Icon(Icons.location_city_outlined),
+                  helperText: 'Choose from list or select "Other" to type yours',
                 ),
-                items: districts
-                    .map((d) => DropdownMenuItem(value: d, child: Text(d, overflow: TextOverflow.ellipsis)))
-                    .toList(),
-                onChanged: (v) => setState(() => _district = v),
+                items: [
+                  const DropdownMenuItem<String>(
+                      value: null, child: Text('Skip — no specific district')),
+                  ...districts.map((d) => DropdownMenuItem(
+                      value: d, child: Text(d, overflow: TextOverflow.ellipsis))),
+                  DropdownMenuItem(
+                    value: _kOther,
+                    child: Row(children: [
+                      Icon(Icons.edit_outlined,
+                          size: 16, color: Theme.of(context).colorScheme.primary),
+                      const SizedBox(width: 6),
+                      Text('Other — type your district',
+                          style: TextStyle(
+                            color: Theme.of(context).colorScheme.primary,
+                            fontStyle: FontStyle.italic,
+                          )),
+                    ]),
+                  ),
+                ],
+                onChanged: (v) => setState(() {
+                  _district = v;
+                  _districtCtrl.clear();
+                }),
               ),
+              if (_district == _kOther) ...[
+                const SizedBox(height: 10),
+                TextFormField(
+                  controller: _districtCtrl,
+                  decoration: const InputDecoration(
+                    labelText: 'District / Municipality name',
+                    prefixIcon: Icon(Icons.location_city_outlined),
+                    hintText: 'e.g. Kumbungu District, Nkoranza North…',
+                  ),
+                  textCapitalization: TextCapitalization.words,
+                ),
+              ],
               const SizedBox(height: 14),
             ],
 
@@ -412,87 +494,112 @@ class _FarmerPostHarvestTabState extends State<_FarmerPostHarvestTab> {
             ),
             const SizedBox(height: 24),
 
-            // ── Buyer contact info ──────────────────────────────────────────
-            Text('For Buyers',
-                style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                    color: AgriColors.forestGreen,
-                    fontWeight: FontWeight.w700)),
-            const SizedBox(height: 4),
-            Text('This information will be visible to buyers sourcing produce.',
-                style: Theme.of(context).textTheme.bodySmall),
-            const SizedBox(height: 12),
-
-            TextFormField(
-              controller: _phoneCtrl,
-              keyboardType: TextInputType.phone,
-              decoration: const InputDecoration(
-                labelText: 'Phone number',
-                prefixIcon: Icon(Icons.phone_outlined),
-                hintText: '024 XXX XXXX',
-              ),
-              validator: (v) =>
-                  (v == null || v.trim().isEmpty) ? 'Enter your phone number' : null,
+            // ── Consent ─────────────────────────────────────────────────────
+            const SizedBox(height: 8),
+            _ConsentTile(
+              icon: Icons.storefront_outlined,
+              title: 'List my produce in the marketplace',
+              subtitle:
+                  'Buyers will be able to see your crop, quantity, price, '
+                  'location, and phone number so they can contact you directly.',
+              value: _consentMarket,
+              onChanged: (v) => setState(() => _consentMarket = v ?? false),
             ),
-            const SizedBox(height: 14),
-
-            TextFormField(
-              controller: _qtyForSaleCtrl,
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-              decoration: const InputDecoration(
-                labelText: 'Quantity available for sale (kg)',
-                prefixIcon: Icon(Icons.inventory_2_outlined),
-                suffixText: 'kg',
-                hintText: 'Leave blank to use full harvest weight',
-              ),
-              validator: (v) {
-                if (v == null || v.trim().isEmpty) return null;
-                if (double.tryParse(v.trim()) == null) return 'Invalid number';
-                return null;
-              },
+            const SizedBox(height: 8),
+            _ConsentTile(
+              icon: Icons.model_training_rounded,
+              title: 'Help improve yield predictions',
+              subtitle:
+                  'Your yield figures will be used anonymously to retrain '
+                  'AgriGuard\'s model. No personal details are shared.',
+              value: _consentTraining,
+              onChanged: (v) => setState(() => _consentTraining = v ?? false),
             ),
-            const SizedBox(height: 14),
 
-            TextFormField(
-              controller: _priceCtrl,
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-              decoration: const InputDecoration(
-                labelText: 'Price per kg (GHS, optional)',
-                prefixIcon: Icon(Icons.attach_money_rounded),
-                suffixText: 'GHS/kg',
-              ),
-              validator: (v) {
-                if (v == null || v.trim().isEmpty) return null;
-                if (double.tryParse(v.trim()) == null) return 'Invalid number';
-                return null;
-              },
-            ),
-            const SizedBox(height: 14),
+            // ── Buyer contact info (only shown when market consent given) ───
+            if (_consentMarket) ...[
+              const SizedBox(height: 20),
+              Text('Contact & Listing Details',
+                  style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                      color: AgriColors.forestGreen,
+                      fontWeight: FontWeight.w700)),
+              const SizedBox(height: 4),
+              Text('Visible to buyers in the marketplace.',
+                  style: Theme.of(context).textTheme.bodySmall),
+              const SizedBox(height: 12),
 
-            TextFormField(
-              controller: _qualityCtrl,
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-              decoration: const InputDecoration(
-                labelText: 'Quality score (1–10, optional)',
-                prefixIcon: Icon(Icons.star_outline_rounded),
+              TextFormField(
+                controller: _phoneCtrl,
+                keyboardType: TextInputType.phone,
+                decoration: const InputDecoration(
+                  labelText: 'Phone number',
+                  prefixIcon: Icon(Icons.phone_outlined),
+                  hintText: '024 XXX XXXX',
+                ),
+                validator: (v) =>
+                    (v == null || v.trim().isEmpty) ? 'Enter your phone number' : null,
               ),
-              validator: (v) {
-                if (v == null || v.trim().isEmpty) return null;
-                final n = double.tryParse(v.trim());
-                if (n == null || n < 1 || n > 10) return 'Enter 1–10';
-                return null;
-              },
-            ),
-            const SizedBox(height: 14),
+              const SizedBox(height: 14),
 
-            TextFormField(
-              controller: _notesCtrl,
-              maxLines: 2,
-              decoration: const InputDecoration(
-                labelText: 'Additional notes (optional)',
-                prefixIcon: Icon(Icons.notes_rounded),
-                hintText: 'e.g. Delivery available, organic farming',
+              TextFormField(
+                controller: _qtyForSaleCtrl,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                decoration: const InputDecoration(
+                  labelText: 'Quantity available for sale (kg)',
+                  prefixIcon: Icon(Icons.inventory_2_outlined),
+                  suffixText: 'kg',
+                  hintText: 'Leave blank to use full harvest weight',
+                ),
+                validator: (v) {
+                  if (v == null || v.trim().isEmpty) return null;
+                  if (double.tryParse(v.trim()) == null) return 'Invalid number';
+                  return null;
+                },
               ),
-            ),
+              const SizedBox(height: 14),
+
+              TextFormField(
+                controller: _priceCtrl,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                decoration: const InputDecoration(
+                  labelText: 'Price per kg (GHS, optional)',
+                  prefixIcon: Icon(Icons.attach_money_rounded),
+                  suffixText: 'GHS/kg',
+                ),
+                validator: (v) {
+                  if (v == null || v.trim().isEmpty) return null;
+                  if (double.tryParse(v.trim()) == null) return 'Invalid number';
+                  return null;
+                },
+              ),
+              const SizedBox(height: 14),
+
+              TextFormField(
+                controller: _qualityCtrl,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                decoration: const InputDecoration(
+                  labelText: 'Quality score (1–10, optional)',
+                  prefixIcon: Icon(Icons.star_outline_rounded),
+                ),
+                validator: (v) {
+                  if (v == null || v.trim().isEmpty) return null;
+                  final n = double.tryParse(v.trim());
+                  if (n == null || n < 1 || n > 10) return 'Enter 1–10';
+                  return null;
+                },
+              ),
+              const SizedBox(height: 14),
+
+              TextFormField(
+                controller: _notesCtrl,
+                maxLines: 2,
+                decoration: const InputDecoration(
+                  labelText: 'Additional notes (optional)',
+                  prefixIcon: Icon(Icons.notes_rounded),
+                  hintText: 'e.g. Delivery available, organic farming',
+                ),
+              ),
+            ],
             const SizedBox(height: 24),
 
             SizedBox(
@@ -564,6 +671,7 @@ class _BuyerForecastTabState extends State<_BuyerForecastTab> {
   String? _region;
   String? _district;
   final _yearCtrl = TextEditingController();
+  final _districtCtrl = TextEditingController();
   bool _loading = false;
   Map<String, dynamic>? _result;
   String? _error;
@@ -571,11 +679,15 @@ class _BuyerForecastTabState extends State<_BuyerForecastTab> {
   @override
   void dispose() {
     _yearCtrl.dispose();
+    _districtCtrl.dispose();
     super.dispose();
   }
 
   Future<void> _search() async {
-    if (_crop == null && _region == null && _district == null) {
+    final districtParam = _district == _kOther
+        ? (_districtCtrl.text.trim().isEmpty ? null : _districtCtrl.text.trim())
+        : _district;
+    if (_crop == null && _region == null && districtParam == null) {
       setState(
           () => _error = 'Select at least one filter (crop or region).');
       return;
@@ -590,7 +702,7 @@ class _BuyerForecastTabState extends State<_BuyerForecastTab> {
       final res = await widget.backend.buyerPredict({
         'crop': ?_crop,
         'region': ?_region,
-        'district': ?_district,
+        'district': ?districtParam,
         'year': ?year,
       });
       setState(() => _result = res);
@@ -655,27 +767,56 @@ class _BuyerForecastTabState extends State<_BuyerForecastTab> {
             onChanged: (v) => setState(() {
               _region = v;
               _district = null;
+              _districtCtrl.clear();
             }),
           ),
           const SizedBox(height: 14),
 
-          if (districts.isNotEmpty) ...[
+          if (_region != null) ...[
             DropdownButtonFormField<String>(
               isExpanded: true,
-              // ignore: deprecated_member_use
               value: _district,
               decoration: const InputDecoration(
                 labelText: 'District (optional)',
                 prefixIcon: Icon(Icons.location_city_outlined),
+                helperText: 'Choose from list or select "Other" to type yours',
               ),
               items: [
-                const DropdownMenuItem(
+                const DropdownMenuItem<String>(
                     value: null, child: Text('All districts')),
-                ...districts.map(
-                    (d) => DropdownMenuItem(value: d, child: Text(d, overflow: TextOverflow.ellipsis))),
+                ...districts.map((d) => DropdownMenuItem(
+                    value: d, child: Text(d, overflow: TextOverflow.ellipsis))),
+                DropdownMenuItem(
+                  value: _kOther,
+                  child: Row(children: [
+                    Icon(Icons.edit_outlined,
+                        size: 16, color: Theme.of(context).colorScheme.primary),
+                    const SizedBox(width: 6),
+                    Text('Other — type your district',
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.primary,
+                          fontStyle: FontStyle.italic,
+                        )),
+                  ]),
+                ),
               ],
-              onChanged: (v) => setState(() => _district = v),
+              onChanged: (v) => setState(() {
+                _district = v;
+                _districtCtrl.clear();
+              }),
             ),
+            if (_district == _kOther) ...[
+              const SizedBox(height: 10),
+              TextFormField(
+                controller: _districtCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'District / Municipality name',
+                  prefixIcon: Icon(Icons.location_city_outlined),
+                  hintText: 'e.g. Kumbungu District, Nkoranza North…',
+                ),
+                textCapitalization: TextCapitalization.words,
+              ),
+            ],
             const SizedBox(height: 14),
           ],
 
@@ -1186,6 +1327,73 @@ class _InfoCard extends StatelessWidget {
           const SizedBox(height: 8),
           child,
         ],
+      ),
+    );
+  }
+}
+
+class _ConsentTile extends StatelessWidget {
+  const _ConsentTile({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.value,
+    required this.onChanged,
+  });
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final bool value;
+  final ValueChanged<bool?> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = value ? AgriColors.forestGreen : Theme.of(context).colorScheme.onSurfaceVariant;
+    return InkWell(
+      onTap: () => onChanged(!value),
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: value
+                ? AgriColors.forestGreen.withValues(alpha: 0.5)
+                : Theme.of(context).dividerColor,
+          ),
+          color: value
+              ? AgriColors.forestGreen.withValues(alpha: 0.06)
+              : Colors.transparent,
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Checkbox(
+              value: value,
+              onChanged: onChanged,
+              activeColor: AgriColors.forestGreen,
+              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              visualDensity: VisualDensity.compact,
+            ),
+            const SizedBox(width: 8),
+            Icon(icon, size: 18, color: color),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title,
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          fontWeight: FontWeight.w600, color: color)),
+                  const SizedBox(height: 2),
+                  Text(subtitle,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant)),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

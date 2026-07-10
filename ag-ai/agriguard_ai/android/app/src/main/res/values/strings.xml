@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Agri-Guard AI</string>
+    <!-- Replace with your Web Client ID from Google Cloud Console → APIs & Services → Credentials -->
+    <string name="default_web_client_id">594118918172-0gfg5g2hhp31078g2g7ln2p1hh7ec8ij.apps.googleusercontent.com</string>
+</resources>

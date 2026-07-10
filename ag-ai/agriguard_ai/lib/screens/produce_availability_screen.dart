@@ -5,6 +5,28 @@ import '../services/backend_service.dart';
 import '../utils/app_theme.dart';
 import '../utils/ghana_locations.dart';
 
+// Each crop group gets a unique (background, accent) pair cycling through this list.
+const _kGroupBg = [
+  Color(0xFF1B4332), // forest green
+  Color(0xFF1A3A5C), // navy blue
+  Color(0xFF3D1A5C), // deep purple
+  Color(0xFF4A2C0A), // dark amber
+  Color(0xFF0D4044), // dark teal
+  Color(0xFF5C1A1A), // dark red
+  Color(0xFF1A1F5C), // dark indigo
+  Color(0xFF2E3E1A), // dark olive
+];
+const _kGroupAccent = [
+  Color(0xFF52B788), // mint green
+  Color(0xFF64B5F6), // sky blue
+  Color(0xFFCE93D8), // lavender
+  Color(0xFFFFB74D), // amber
+  Color(0xFF4DB6AC), // teal
+  Color(0xFFEF9A9A), // rose
+  Color(0xFF9FA8DA), // periwinkle
+  Color(0xFFC5E1A5), // light olive
+];
+
 class ProduceAvailabilityScreen extends StatefulWidget {
   const ProduceAvailabilityScreen({super.key});
 
@@ -44,8 +66,10 @@ class _ProduceAvailabilityScreenState
 
   Future<void> _load() async {
     setState(() { _loading = true; _error = null; });
+    final backend = context.read<BackendService>();
+    final buyerId = _buyerId;
     try {
-      final res = await context.read<BackendService>().getHarvestActuals(
+      final res = await backend.getHarvestActuals(
         crop: _selectedCrop,
         region: _selectedRegion,
       );
@@ -55,8 +79,8 @@ class _ProduceAvailabilityScreenState
     } finally {
       if (mounted) setState(() => _loading = false);
     }
-    context.read<BackendService>().logBuyerActivity(
-      buyerId: _buyerId,
+    backend.logBuyerActivity(
+      buyerId: buyerId,
       action: 'search',
       screen: 'produce_availability',
       crop: _selectedCrop,
@@ -141,9 +165,20 @@ class _FilterBar extends StatelessWidget {
             dropdownColor: AgriColors.forestGreen,
             style: const TextStyle(color: Colors.white, fontSize: 14),
             iconEnabledColor: Colors.white70,
-            decoration: const InputDecoration(
+            decoration: InputDecoration(
               labelText: 'Crop',
-              contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              labelStyle: const TextStyle(color: Colors.white70),
+              filled: true,
+              fillColor: Colors.white.withValues(alpha: 0.12),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: const BorderSide(color: Colors.white30),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: const BorderSide(color: Colors.white70),
+              ),
             ),
             items: [
               const DropdownMenuItem(
@@ -168,9 +203,20 @@ class _FilterBar extends StatelessWidget {
             dropdownColor: AgriColors.forestGreen,
             style: const TextStyle(color: Colors.white, fontSize: 14),
             iconEnabledColor: Colors.white70,
-            decoration: const InputDecoration(
+            decoration: InputDecoration(
               labelText: 'Region',
-              contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              labelStyle: const TextStyle(color: Colors.white70),
+              filled: true,
+              fillColor: Colors.white.withValues(alpha: 0.12),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: const BorderSide(color: Colors.white30),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: const BorderSide(color: Colors.white70),
+              ),
             ),
             items: [
               const DropdownMenuItem(
@@ -219,6 +265,23 @@ class _MarketView extends StatelessWidget {
     final cropLabel   = query['crop']?.toString()   ?? 'All Crops';
     final regionLabel = query['region']?.toString() ?? 'All Regions';
 
+    // Group entries by crop name
+    final grouped = <String, List<Map<String, dynamic>>>{};
+    for (final raw in entries) {
+      final e = Map<String, dynamic>.from(raw as Map);
+      final crop = (e['crop']?.toString() ?? 'Unknown').trim();
+      grouped.putIfAbsent(crop, () => []).add(e);
+    }
+    // Sort groups by total quantity available (highest first)
+    final sortedGroups = grouped.entries.toList()
+      ..sort((a, b) {
+        final aQty = a.value.fold<double>(0,
+            (s, e) => s + ((e['quantity_available_kg'] as num?)?.toDouble() ?? 0));
+        final bQty = b.value.fold<double>(0,
+            (s, e) => s + ((e['quantity_available_kg'] as num?)?.toDouble() ?? 0));
+        return bQty.compareTo(aQty);
+      });
+
     return ListView(
       padding: EdgeInsets.fromLTRB(16, 16, 16, bottomPad + 16),
       children: [
@@ -243,20 +306,24 @@ class _MarketView extends StatelessWidget {
             const Icon(Icons.storefront_rounded,
                 size: 18, color: AgriColors.mintGreen),
             const SizedBox(width: 6),
-            Text('Farmers Available ($total)',
-                style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600)),
+            Text(
+              '${sortedGroups.length} Crop${sortedGroups.length == 1 ? '' : 's'} · $total Farmer${total == 1 ? '' : 's'}',
+              style: TextStyle(
+                  color: Theme.of(context).colorScheme.onSurface,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600),
+            ),
           ]),
           const SizedBox(height: 10),
 
-          // ── One card per farmer ────────────────────────────────────────
-          ...entries.map((e) {
-            final item = Map<String, dynamic>.from(e as Map);
-            final pred = (item['prediction'] as Map<String, dynamic>?) ?? item;
-            return _FarmerCard(item: item, pred: pred, buyerId: buyerId);
-          }),
+          // ── One grouped card per crop ──────────────────────────────────
+          for (var i = 0; i < sortedGroups.length; i++)
+            _CropGroupCard(
+              crop: sortedGroups[i].key,
+              entries: sortedGroups[i].value,
+              buyerId: buyerId,
+              colorIndex: i,
+            ),
         ],
       ],
     );
@@ -270,16 +337,18 @@ class _MarketView extends StatelessWidget {
             const Icon(Icons.inbox_outlined,
                 size: 60, color: AgriColors.mintGreen),
             const SizedBox(height: 16),
-            const Text('No produce listed yet.',
+            Text('No produce listed yet.',
                 style: TextStyle(
-                    color: Colors.white,
+                    color: Theme.of(context).colorScheme.onSurface,
                     fontSize: 16,
                     fontWeight: FontWeight.w600),
                 textAlign: TextAlign.center),
             const SizedBox(height: 8),
-            const Text(
+            Text(
               'Farmers haven\'t submitted harvest reports\nfor this selection yet.',
-              style: TextStyle(color: Colors.white70, fontSize: 13),
+              style: TextStyle(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  fontSize: 13),
               textAlign: TextAlign.center,
             ),
           ],
@@ -451,6 +520,223 @@ class _StatBox extends StatelessWidget {
   }
 }
 
+// ── Crop group card (one per crop, expands to show individual farmers) ─────────
+
+class _CropGroupCard extends StatefulWidget {
+  const _CropGroupCard({
+    required this.crop,
+    required this.entries,
+    required this.buyerId,
+    required this.colorIndex,
+  });
+  final String crop;
+  final List<Map<String, dynamic>> entries;
+  final String buyerId;
+  final int colorIndex;
+
+  @override
+  State<_CropGroupCard> createState() => _CropGroupCardState();
+}
+
+class _CropGroupCardState extends State<_CropGroupCard> {
+  static const _pageSize = 6;
+
+  bool _expanded = false;
+  int _showCount = _pageSize;
+
+  // Cached aggregates — computed once, not on every build
+  late final Color _bg;
+  late final Color _accent;
+  late final Color _farmerBg;
+  late final String _qtyLabel;
+  late final String? _priceLabel;
+  late final LinearGradient _gradient;
+
+  @override
+  void initState() {
+    super.initState();
+    final idx = widget.colorIndex;
+    _bg = _kGroupBg[idx % _kGroupBg.length];
+    _accent = _kGroupAccent[idx % _kGroupAccent.length];
+    _farmerBg = Color.lerp(_bg, Colors.black, 0.30)!;
+    _gradient = LinearGradient(
+      colors: [_bg, Color.lerp(_bg, _accent, 0.14)!],
+      begin: Alignment.topLeft,
+      end: Alignment.bottomRight,
+    );
+
+    double qty = 0;
+    double? minP, maxP;
+    for (final e in widget.entries) {
+      qty += (e['quantity_available_kg'] as num?)?.toDouble() ?? 0;
+      final p = (e['price_per_kg_ghs'] as num?)?.toDouble();
+      if (p != null) {
+        minP = minP == null ? p : (p < minP ? p : minP);
+        maxP = maxP == null ? p : (p > maxP ? p : maxP);
+      }
+    }
+    _qtyLabel = qty <= 0
+        ? 'qty unknown'
+        : qty >= 1000
+            ? '${(qty / 1000).toStringAsFixed(1)} t available'
+            : '${qty.toStringAsFixed(0)} kg available';
+    _priceLabel = minP == null
+        ? null
+        : minP == maxP
+            ? 'GH₵ ${minP.toStringAsFixed(2)}/kg'
+            : 'GH₵ ${minP.toStringAsFixed(2)} – ${maxP?.toStringAsFixed(2)}/kg';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final entries = widget.entries;
+    final farmerCount = entries.length;
+    final visible = entries.take(_showCount).toList();
+    final hasMore = farmerCount > _showCount;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 14),
+      decoration: BoxDecoration(
+        gradient: _gradient,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: _expanded ? _accent.withValues(alpha: 0.6) : Colors.white12,
+          width: _expanded ? 1.5 : 1,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: _bg.withValues(alpha: 0.4),
+            blurRadius: 8,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // ── Header (always visible) ─────────────────────────────────────
+          GestureDetector(
+            onTap: () => setState(() {
+              _expanded = !_expanded;
+              if (!_expanded) _showCount = _pageSize; // reset page on collapse
+            }),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(children: [
+                Container(
+                  width: 48,
+                  height: 48,
+                  decoration: BoxDecoration(
+                    color: _accent.withValues(alpha: 0.2),
+                    borderRadius: BorderRadius.circular(13),
+                    border: Border.all(
+                        color: _accent.withValues(alpha: 0.3), width: 1),
+                  ),
+                  child: Icon(Icons.grass_rounded, color: _accent, size: 24),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(widget.crop,
+                          style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w800,
+                              fontSize: 17)),
+                      const SizedBox(height: 2),
+                      Text(
+                        '$farmerCount farmer${farmerCount == 1 ? '' : 's'} · $_qtyLabel',
+                        style: const TextStyle(
+                            color: Colors.white70, fontSize: 12),
+                      ),
+                    ],
+                  ),
+                ),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    if (_priceLabel != null)
+                      Text(_priceLabel!,
+                          style: TextStyle(
+                              color: _accent,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700)),
+                    const SizedBox(height: 4),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: _accent.withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                            color: _accent.withValues(alpha: 0.3)),
+                      ),
+                      child: Row(mainAxisSize: MainAxisSize.min, children: [
+                        Text(
+                          _expanded ? 'Hide' : 'View farmers',
+                          style: TextStyle(
+                              color: _accent,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w600),
+                        ),
+                        const SizedBox(width: 3),
+                        Icon(
+                          _expanded
+                              ? Icons.keyboard_arrow_up_rounded
+                              : Icons.keyboard_arrow_down_rounded,
+                          color: _accent,
+                          size: 14,
+                        ),
+                      ]),
+                    ),
+                  ],
+                ),
+              ]),
+            ),
+          ),
+
+          // ── Expanded: paginated farmer cards ────────────────────────────
+          if (_expanded) ...[
+            Divider(color: _accent.withValues(alpha: 0.25), height: 1),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  // Only build `visible` (≤ _showCount) cards at a time
+                  for (final item in visible) ...[
+                    _FarmerCard(
+                      item: item,
+                      pred: (item['prediction'] as Map<String, dynamic>?) ?? item,
+                      buyerId: widget.buyerId,
+                      cardColor: _farmerBg,
+                      accentColor: _accent,
+                    ),
+                  ],
+                  // "Show more" button — loads next page lazily
+                  if (hasMore)
+                    TextButton.icon(
+                      onPressed: () => setState(
+                          () => _showCount = (_showCount + _pageSize)
+                              .clamp(0, farmerCount)),
+                      icon: Icon(Icons.expand_more_rounded,
+                          color: _accent, size: 18),
+                      label: Text(
+                        'Show more (${farmerCount - _showCount} remaining)',
+                        style: TextStyle(color: _accent, fontSize: 12),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
 // ── Individual farmer card ─────────────────────────────────────────────────────
 
 class _FarmerCard extends StatefulWidget {
@@ -458,11 +744,15 @@ class _FarmerCard extends StatefulWidget {
     required this.item,
     required this.pred,
     required this.buyerId,
+    this.cardColor,
+    this.accentColor,
   });
 
   final Map<String, dynamic> item;
   final Map<String, dynamic> pred;
   final String buyerId;
+  final Color? cardColor;
+  final Color? accentColor;
 
   @override
   State<_FarmerCard> createState() => _FarmerCardState();
@@ -476,6 +766,8 @@ class _FarmerCardState extends State<_FarmerCard> {
     final item     = widget.item;
     final pred     = widget.pred;
     final buyerId  = widget.buyerId;
+    final bg       = widget.cardColor ?? AgriColors.forestGreen;
+    final accent   = widget.accentColor ?? AgriColors.mintGreen;
 
     final crop      = (item['crop']     ?? '').toString();
     final region    = (item['region']   ?? '').toString();
@@ -515,46 +807,57 @@ class _FarmerCardState extends State<_FarmerCard> {
           details: {'quantity_kg': qtyKg, 'price_ghs': priceGhs},
         );
       },
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
+      child: Container(
         margin: const EdgeInsets.only(bottom: 10),
         decoration: BoxDecoration(
-          color: AgriColors.forestGreen,
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(14),
           border: Border.all(
-            color: _expanded ? AgriColors.mintGreen.withValues(alpha: 0.5) : Colors.white12,
-            width: _expanded ? 1.5 : 1,
+            color: _expanded
+                ? accent.withValues(alpha: 0.5)
+                : Colors.white12,
           ),
         ),
-        padding: const EdgeInsets.all(16),
-        child: Column(
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(13),
+          child: IntrinsicHeight(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // Coloured left accent bar
+                Container(width: 5, color: accent),
+                // Card content
+                Expanded(
+                  child: Container(
+                    color: bg,
+                    padding: const EdgeInsets.all(14),
+                    child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // ── Header ───────────────────────────────────────────────────
             Row(children: [
               Container(
-                width: 40,
-                height: 40,
+                width: 38,
+                height: 38,
                 decoration: BoxDecoration(
-                  color: AgriColors.mintGreen.withValues(alpha: 0.2),
+                  color: accent.withValues(alpha: 0.2),
                   borderRadius: BorderRadius.circular(10),
                 ),
-                child: const Icon(Icons.agriculture_rounded,
-                    color: AgriColors.mintGreen, size: 22),
+                child: Icon(Icons.person_outline_rounded,
+                    color: accent, size: 20),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 10),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(crop,
-                        style: const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w700,
-                            fontSize: 15)),
                     Text(location.isEmpty ? region : location,
                         style: const TextStyle(
-                            color: Colors.white70, fontSize: 12)),
+                            color: Colors.white,
+                            fontWeight: FontWeight.w600,
+                            fontSize: 14)),
+                    Text(region,
+                        style: const TextStyle(
+                            color: Colors.white60, fontSize: 11)),
                   ],
                 ),
               ),
@@ -583,9 +886,9 @@ class _FarmerCardState extends State<_FarmerCard> {
               ),
             ]),
 
-            const SizedBox(height: 12),
-            const Divider(color: Colors.white12, height: 1),
             const SizedBox(height: 10),
+            Divider(color: accent.withValues(alpha: 0.2), height: 1),
+            const SizedBox(height: 8),
 
             // ── Data tags (always visible) ─────────────────────────────
             Wrap(spacing: 8, runSpacing: 6, children: [
@@ -595,30 +898,33 @@ class _FarmerCardState extends State<_FarmerCard> {
                   label: qtyKg >= 1000
                       ? '${(qtyKg / 1000).toStringAsFixed(1)} t available'
                       : '${qtyKg.toStringAsFixed(0)} kg available',
+                  color: accent,
                 ),
               if (priceGhs != null)
                 _Tag(
                   icon: Icons.attach_money_rounded,
                   label: 'GH₵ ${priceGhs.toStringAsFixed(2)}/kg',
-                  highlight: true,
+                  color: AgriColors.gold,
                 ),
               if (yieldKgHa > 0)
                 _Tag(
                   icon: Icons.trending_up_rounded,
                   label: '${yieldKgHa.toStringAsFixed(0)} kg/ha',
+                  color: accent,
                 ),
               if (area > 0)
                 _Tag(
                   icon: Icons.square_foot_rounded,
                   label: '${area.toStringAsFixed(1)} ha',
+                  color: accent,
                 ),
             ]),
 
             // ── Expanded details ───────────────────────────────────────
             if (_expanded) ...[
-              const SizedBox(height: 12),
-              const Divider(color: Colors.white12, height: 1),
               const SizedBox(height: 10),
+              Divider(color: accent.withValues(alpha: 0.2), height: 1),
+              const SizedBox(height: 8),
 
               // Full location
               if (town.isNotEmpty || district.isNotEmpty) ...[
@@ -657,13 +963,21 @@ class _FarmerCardState extends State<_FarmerCard> {
               if (phone.isNotEmpty) ...[
                 const SizedBox(height: 8),
                 Text('Tap for contact & full details',
-                    style: TextStyle(color: Colors.white.withValues(alpha: 0.4), fontSize: 11)),
+                    style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.4),
+                        fontSize: 11)),
               ],
             ],
-          ],
-        ),
-      ),
-    );
+                  ],  // Column children
+                ),    // Column
+              ),      // inner Container
+            ),        // Expanded
+          ],          // Row children
+        ),            // Row
+      ),              // IntrinsicHeight
+    ),                // ClipRRect
+  ),                  // outer Container
+);                    // GestureDetector — ends return statement
   }
 }
 
@@ -695,14 +1009,13 @@ class _DetailRow extends StatelessWidget {
 }
 
 class _Tag extends StatelessWidget {
-  const _Tag({required this.icon, required this.label, this.highlight = false});
+  const _Tag({required this.icon, required this.label, this.color = AgriColors.mintGreen});
   final IconData icon;
   final String label;
-  final bool highlight;
+  final Color color;
 
   @override
   Widget build(BuildContext context) {
-    final color = highlight ? AgriColors.gold : AgriColors.mintGreen;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
@@ -736,13 +1049,13 @@ class _ErrorView extends StatelessWidget {
             const Icon(Icons.cloud_off_rounded,
                 size: 56, color: AgriColors.danger),
             const SizedBox(height: 16),
-            const Text('Could not load market data.',
-                style: TextStyle(color: Colors.white, fontSize: 16,
-                    fontWeight: FontWeight.w600),
+            Text('Could not load market data.',
+                style: TextStyle(color: Theme.of(context).colorScheme.onSurface,
+                    fontSize: 16, fontWeight: FontWeight.w600),
                 textAlign: TextAlign.center),
             const SizedBox(height: 8),
             Text(error,
-                style: const TextStyle(color: Colors.white60, fontSize: 12),
+                style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 12),
                 textAlign: TextAlign.center,
                 maxLines: 5,
                 overflow: TextOverflow.ellipsis),
@@ -761,12 +1074,15 @@ class _EmptyView extends StatelessWidget {
   const _EmptyView();
 
   @override
-  Widget build(BuildContext context) => const Center(
+  Widget build(BuildContext context) => Center(
         child: Column(mainAxisSize: MainAxisSize.min, children: [
-          Icon(Icons.storefront_outlined, size: 64, color: Colors.white38),
-          SizedBox(height: 16),
+          Icon(Icons.storefront_outlined, size: 64,
+              color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.4)),
+          const SizedBox(height: 16),
           Text('Select a crop or region to see\navailable produce.',
-              style: TextStyle(color: Colors.white70, fontSize: 14),
+              style: TextStyle(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  fontSize: 14),
               textAlign: TextAlign.center),
         ]),
       );

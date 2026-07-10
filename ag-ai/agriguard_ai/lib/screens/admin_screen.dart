@@ -20,11 +20,17 @@ class _AdminScreenState extends State<AdminScreen>
   Map<String, int> _stats = {};
   String? _statsError;
 
+  bool _loadingModel = true;
+  Map<String, dynamic>? _modelStatus;
+
   @override
   void initState() {
     super.initState();
     _tabs = TabController(length: 4, vsync: this);
-    WidgetsBinding.instance.addPostFrameCallback((_) => _loadStats());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadStats();
+      _loadModelStatus();
+    });
   }
 
   @override
@@ -43,6 +49,24 @@ class _AdminScreenState extends State<AdminScreen>
       if (mounted) setState(() => _statsError = e.toString());
     } finally {
       if (mounted) setState(() => _loadingStats = false);
+    }
+  }
+
+  Future<void> _loadModelStatus() async {
+    if (!mounted) return;
+    setState(() => _loadingModel = true);
+    try {
+      final res = await context.read<BackendService>().retrainHistory();
+      final history = res['history'] as List<dynamic>? ?? [];
+      if (mounted) {
+        setState(() => _modelStatus = history.isNotEmpty
+            ? Map<String, dynamic>.from(history.first as Map)
+            : null);
+      }
+    } catch (_) {
+      if (mounted) setState(() => _modelStatus = null);
+    } finally {
+      if (mounted) setState(() => _loadingModel = false);
     }
   }
 
@@ -65,22 +89,56 @@ class _AdminScreenState extends State<AdminScreen>
       ),
     );
     if (confirm != true || !mounted) return;
+
+    // Capture navigator + messenger before any await so context isn't used across gaps
+    final nav = Navigator.of(context, rootNavigator: true);
+    final messenger = ScaffoldMessenger.of(context);
+    final backend = context.read<BackendService>();
+
+    // Show progress indicator while waiting
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const AlertDialog(
+        content: Row(children: [
+          CircularProgressIndicator(),
+          SizedBox(width: 20),
+          Expanded(child: Text('Training models… this may take a few minutes.')),
+        ]),
+      ),
+    );
+
     try {
-      await context.read<BackendService>().triggerRetrain();
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Retraining started successfully.'),
-            backgroundColor: AgriColors.forestGreen,
+      final res = await backend.triggerRetrain();
+      nav.pop(); // close progress dialog
+
+      final winner = res['winner'] as String? ?? 'Unknown';
+      final winnerShort = winner.contains('Gradient') ? 'Gradient Boosting' : 'Random Forest';
+      final best = winner.contains('Gradient')
+          ? (res['advanced'] as Map<String, dynamic>? ?? {})
+          : (res['baseline'] as Map<String, dynamic>? ?? {});
+      final r2 = (best['r2_test'] as num?)?.toDouble() ?? 0.0;
+      final mae = (best['mae_test_kg_ha'] as num?)?.toDouble() ?? 0.0;
+      final nTrain = best['n_train'] as int? ?? 0;
+
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(
+            'Training complete! Winner: $winnerShort — '
+            'R² ${(r2 * 100).toStringAsFixed(1)}%, '
+            'MAE ${mae.toStringAsFixed(0)} kg/ha '
+            '(trained on $nTrain rows)',
           ),
-        );
-      }
+          backgroundColor: AgriColors.forestGreen,
+          duration: const Duration(seconds: 8),
+        ),
+      );
+      if (mounted) _loadModelStatus(); // refresh the status card
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Retrain failed: $e'), backgroundColor: AgriColors.danger),
-        );
-      }
+      nav.pop(); // close progress dialog
+      messenger.showSnackBar(
+        SnackBar(content: Text('Retrain failed: $e'), backgroundColor: AgriColors.danger),
+      );
     }
   }
 
@@ -140,6 +198,8 @@ class _AdminScreenState extends State<AdminScreen>
             error: _statsError,
             onRetry: _loadStats,
             onRetrain: _triggerRetrain,
+            modelStatus: _modelStatus,
+            loadingModel: _loadingModel,
           ),
           _UsersTab(),
           _SubmissionsTab(),
@@ -159,12 +219,16 @@ class _OverviewTab extends StatelessWidget {
     required this.error,
     required this.onRetry,
     required this.onRetrain,
+    required this.modelStatus,
+    required this.loadingModel,
   });
   final bool loading;
   final Map<String, int> stats;
   final String? error;
   final VoidCallback onRetry;
   final VoidCallback onRetrain;
+  final Map<String, dynamic>? modelStatus;
+  final bool loadingModel;
 
   @override
   Widget build(BuildContext context) {
@@ -196,6 +260,14 @@ class _OverviewTab extends StatelessWidget {
           _StatsGrid(stats: stats),
 
           const SizedBox(height: 24),
+          Text('Yield Model',
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w700)),
+          const SizedBox(height: 12),
+
+          _ModelStatusCard(status: modelStatus, loading: loadingModel),
+
+          const SizedBox(height: 12),
           ElevatedButton.icon(
             onPressed: onRetrain,
             icon: const Icon(Icons.model_training_rounded),
@@ -214,6 +286,110 @@ class _OverviewTab extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _ModelStatusCard extends StatelessWidget {
+  const _ModelStatusCard({required this.status, required this.loading});
+  final Map<String, dynamic>? status;
+  final bool loading;
+
+  String _fmtDate(String? iso) {
+    if (iso == null || iso.isEmpty) return '—';
+    try {
+      final dt = DateTime.parse(iso).toLocal();
+      final months = ['Jan','Feb','Mar','Apr','May','Jun',
+                      'Jul','Aug','Sep','Oct','Nov','Dec'];
+      final h = dt.hour.toString().padLeft(2, '0');
+      final m = dt.minute.toString().padLeft(2, '0');
+      return '${dt.day} ${months[dt.month - 1]} ${dt.year} $h:$m';
+    } catch (_) {
+      return iso;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (loading) {
+      return const Card(
+        child: Padding(
+          padding: EdgeInsets.all(16),
+          child: Center(child: SizedBox(width: 20, height: 20,
+              child: CircularProgressIndicator(strokeWidth: 2))),
+        ),
+      );
+    }
+
+    if (status == null) {
+      return Card(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Row(children: [
+            const Icon(Icons.info_outline_rounded, color: Colors.grey),
+            const SizedBox(width: 10),
+            Text('No training run yet.',
+                style: Theme.of(context).textTheme.bodySmall),
+          ]),
+        ),
+      );
+    }
+
+    final winner = status!['winner'] as String? ?? 'Unknown';
+    final winnerShort = winner.contains('Gradient') ? 'Gradient Boosting' : 'Random Forest';
+    final isGbm = winner.contains('Gradient');
+    final best = isGbm
+        ? (status!['advanced'] as Map<String, dynamic>? ?? {})
+        : (status!['baseline'] as Map<String, dynamic>? ?? {});
+    final r2 = (best['r2_test'] as num?)?.toDouble() ?? 0.0;
+    final mae = (best['mae_test'] as num?)?.toDouble() ?? 0.0;
+    final nTrain = (best['n_train'] as num?)?.toInt() ?? 0;
+    final trainedAt = _fmtDate(status!['generated_at'] as String?);
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(children: [
+              const Icon(Icons.check_circle_rounded, color: AgriColors.forestGreen, size: 18),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text('Active model: $winnerShort',
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w700)),
+              ),
+            ]),
+            const SizedBox(height: 10),
+            _Row(Icons.schedule_rounded, 'Last trained', trainedAt),
+            _Row(Icons.analytics_rounded, 'Accuracy (R²)', '${(r2 * 100).toStringAsFixed(1)}%'),
+            _Row(Icons.straighten_rounded, 'Error (MAE)', '${mae.toStringAsFixed(0)} kg/ha'),
+            _Row(Icons.storage_rounded, 'Trained on', '$nTrain rows'),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _Row extends StatelessWidget {
+  const _Row(this.icon, this.label, this.value);
+  final IconData icon;
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(children: [
+        Icon(icon, size: 14, color: Theme.of(context).colorScheme.onSurfaceVariant),
+        const SizedBox(width: 6),
+        Text('$label: ', style: Theme.of(context).textTheme.bodySmall),
+        Text(value, style: Theme.of(context).textTheme.bodySmall?.copyWith(
+            fontWeight: FontWeight.w600)),
+      ]),
     );
   }
 }

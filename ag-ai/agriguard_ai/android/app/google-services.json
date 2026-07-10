@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "594118918172",
+    "project_id": "agriguardai-8d1bb",
+    "storage_bucket": "agriguardai-8d1bb.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:594118918172:android:7449aa1f69a2867b315fd9",
+        "android_client_info": {
+          "package_name": "com.example.agriguard_ai"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "594118918172-g47v2stlroche506qa57dojb6i7hk342.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.example.agriguard_ai",
+            "certificate_hash": "6cceca35868fffbde48cf83582f65f7f8a723912"
+          }
+        },
+        {
+          "client_id": "594118918172-0gfg5g2hhp31078g2g7ln2p1hh7ec8ij.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAlDs9--s6vA4oZx9_gaJbQaMAdeL-AwfQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "594118918172-0gfg5g2hhp31078g2g7ln2p1hh7ec8ij.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
