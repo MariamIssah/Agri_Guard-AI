@@ -225,6 +225,29 @@ def _save(model, encoders, metrics, features, model_type, params, path,
     }
     joblib.dump(artifact, path)
 
+    # Persist to Supabase so the model survives Railway ephemeral restarts
+    try:
+        import io
+        buf = io.BytesIO()
+        joblib.dump(artifact, buf)
+        model_bytes = buf.getvalue()
+        artifact_name = Path(path).stem  # e.g. "best_model"
+        _meta = {
+            'model_type':  model_type,
+            'r2_test':     metrics.get('r2_test'),
+            'mae_test':    metrics.get('mae_test'),
+            'trained_at':  artifact['trained_at'],
+        }
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'backend' / 'fastapi'))
+        try:
+            from backend.fastapi.db import save_model_artifact
+        except ImportError:
+            from db import save_model_artifact
+        save_model_artifact(artifact_name, model_bytes, _meta)
+        print(f'[DB] Model "{artifact_name}" persisted to Supabase ({len(model_bytes):,} bytes)')
+    except Exception as _e:
+        print(f'[WARN] Could not persist model to DB: {_e}')
+
 
 def _print_report(rf, gbm, rm, gm, features, X_test, y_test):
 

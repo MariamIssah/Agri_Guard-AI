@@ -36,6 +36,9 @@ try:
         update_user_profile,
         get_crop_list, get_gdd_config, get_crop_areas,
         upsert_crop, deactivate_crop, all_crops_config,
+        count_submissions, save_model_artifact, load_model_artifact,
+        verify_user_for_reset, update_user_password,
+        find_or_create_google_user, update_user_role,
     )
 except Exception:
     from db import (
@@ -50,6 +53,9 @@ except Exception:
         update_user_profile,
         get_crop_list, get_gdd_config, get_crop_areas,
         upsert_crop, deactivate_crop, all_crops_config,
+        count_submissions, save_model_artifact, load_model_artifact,
+        verify_user_for_reset, update_user_password,
+        find_or_create_google_user, update_user_role,
     )
 
 ADMIN_EMAIL    = os.getenv('ADMIN_EMAIL')
@@ -91,6 +97,8 @@ class PostHarvestRequest(BaseModel):
     quality_score: Optional[float] = Field(None, example=7.0)
     notes: Optional[str] = Field(None)
     year: Optional[int] = Field(None)
+    consent_market: bool = Field(False, description='Farmer consents to listing in buyer marketplace')
+    consent_training: bool = Field(False, description='Farmer consents to data use for model training')
 
 class TextDiagnoseRequest(BaseModel):
     crop: str = Field(..., example='Maize', description='Crop with symptoms')
@@ -187,7 +195,32 @@ def startup():
         if n:
             print(f'[DB] Migrated {n} records from post_harvest.json')
 
-    # Keep Neon compute alive
+    # Restore best model from Supabase if on-disk version is missing or older
+    try:
+        result = load_model_artifact('best_model')
+        if result is not None:
+            model_bytes, meta = result
+            disk_path = os.path.join(_PS_DIR, 'models', 'best_model.joblib')
+            db_trained_at = (meta or {}).get('trained_at', '')
+            disk_trained_at = ''
+            if os.path.exists(disk_path):
+                import joblib as _jl
+                try:
+                    _art = _jl.load(disk_path)
+                    disk_trained_at = _art.get('trained_at', '')
+                except Exception:
+                    pass
+            if not os.path.exists(disk_path) or db_trained_at > disk_trained_at:
+                os.makedirs(os.path.dirname(disk_path), exist_ok=True)
+                with open(disk_path, 'wb') as _f:
+                    _f.write(model_bytes)
+                print(f'[DB] Restored best_model.joblib from Supabase (trained {db_trained_at})')
+            else:
+                print(f'[DB] On-disk model is current (trained {disk_trained_at})')
+    except Exception as _e:
+        print(f'[WARN] Could not restore model from DB: {_e}')
+
+    # Keep Supabase connection alive
     t = threading.Thread(target=_keepalive_loop, daemon=True)
     t.start()
 
@@ -825,6 +858,25 @@ RETRAIN_LOG_FILE  = os.path.join('farmer_submissions', 'retrain_log.json')
 MIN_SUBMISSIONS_FOR_RETRAIN = 5
 
 
+def _background_retrain():
+    """Run model retraining in a background thread after a new submission milestone."""
+    try:
+        import importlib, sys as _sys
+        _sys.path.insert(0, _PS_DIR)
+        import compare_models as _cm
+        importlib.reload(_cm)
+        baseline_m, advanced_m, _ = _cm.run_comparison(use_db=True)
+        winner = ('GradientBoostingRegressor'
+                  if advanced_m.get('r2_test', 0) >= baseline_m.get('r2_test', 0)
+                  else 'RandomForestRegressor')
+        print(f'[RETRAIN] Auto-retrain complete. Winner: {winner} '
+              f'(R²={max(baseline_m.get("r2_test",0), advanced_m.get("r2_test",0)):.4f})')
+    except Exception as _e:
+        import traceback as _tb
+        print(f'[RETRAIN] Auto-retrain failed: {_e}')
+        _tb.print_exc()
+
+
 @app.post('/api/predict/post-harvest')
 def post_harvest(payload: PostHarvestRequest):
     """Record a farmer's actual harvest and return a comparison with the model prediction."""
@@ -872,7 +924,7 @@ def post_harvest(payload: PostHarvestRequest):
         'region':                 payload.region,
         'district':               payload.district,
         'town':                   payload.town,
-        'phone':                  payload.phone,
+        'phone':                  payload.phone if payload.consent_market else None,
         'area_hectares':          payload.area_hectares,
         'actual_yield_kg':        payload.actual_yield_kg,
         'actual_yield_kg_per_ha': round(actual_kg_ha, 1),
@@ -881,10 +933,20 @@ def post_harvest(payload: PostHarvestRequest):
         'quality_score':          payload.quality_score,
         'notes':                  payload.notes,
         'year':                   year,
+        'consent_market':         payload.consent_market,
+        'consent_training':       payload.consent_training,
     }
     try:
         saved = db_insert(submission)
         submission['submitted_at'] = saved.get('submitted_at', datetime.datetime.now().isoformat())
+        # Auto-retrain every MIN_SUBMISSIONS_FOR_RETRAIN submissions
+        try:
+            total = count_submissions()
+            if total > 0 and total % MIN_SUBMISSIONS_FOR_RETRAIN == 0:
+                print(f'[RETRAIN] Milestone reached ({total} submissions). Starting background retrain.')
+                threading.Thread(target=_background_retrain, daemon=True).start()
+        except Exception as _ce:
+            print(f'[WARN] Could not check submission count: {_ce}')
     except Exception as e:
         print(f'[WARN] Could not save to database: {e}')
         submission['submitted_at'] = datetime.datetime.now().isoformat()
@@ -1093,6 +1155,95 @@ def login(payload: LoginRequest):
     if user is None:
         raise HTTPException(status_code=401, detail='invalid_credentials')
     return JSONResponse(content={'status': 'success', 'user': _serialise(user)})
+
+
+class ResetPasswordRequest(BaseModel):
+    email:        str = Field(..., example='farmer@example.com')
+    name:         str = Field(..., example='Kwame Mensah')
+    new_password: str = Field(..., example='newpass123')
+
+@app.post('/api/auth/reset-password')
+def reset_password(payload: ResetPasswordRequest):
+    """
+    Self-service password reset verified by email + registered full name.
+    No email sending required — name acts as the second factor.
+    """
+    if not payload.new_password or len(payload.new_password) < 6:
+        raise HTTPException(status_code=400, detail='New password must be at least 6 characters.')
+    try:
+        user_id = verify_user_for_reset(payload.email, payload.name)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f'db_error: {e}')
+    if not user_id:
+        raise HTTPException(
+            status_code=400,
+            detail='No account found with that email and name. '
+                   'Make sure you enter your name exactly as you registered.',
+        )
+    try:
+        update_user_password(user_id, payload.new_password)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f'db_error: {e}')
+    return JSONResponse(content={
+        'status': 'success',
+        'message': 'Password updated successfully. You can now log in with your new password.',
+    })
+
+
+class GoogleAuthRequest(BaseModel):
+    id_token: str = Field(..., description='Google ID token from the client')
+
+@app.post('/api/auth/google')
+def google_auth(payload: GoogleAuthRequest):
+    """
+    Verify a Google ID token and return (or create) the matching AgriGuard account.
+    Returns {status, user, is_new}.  New accounts default to role='farmer'; the
+    client should prompt the user to pick a role and call PATCH /api/auth/role.
+    """
+    import urllib.request as _req
+    import json as _json
+    import urllib.parse as _parse
+
+    # Verify token with Google's tokeninfo endpoint
+    try:
+        url = 'https://oauth2.googleapis.com/tokeninfo?id_token=' + _parse.quote(payload.id_token, safe='')
+        with _req.urlopen(url, timeout=10) as resp:
+            info = _json.loads(resp.read())
+    except Exception as e:
+        raise HTTPException(status_code=401, detail=f'google_token_invalid: {e}')
+
+    if info.get('error_description') or not info.get('email_verified'):
+        raise HTTPException(status_code=401, detail='google_token_invalid')
+
+    google_id = info.get('sub')
+    email     = info.get('email', '')
+    name      = info.get('name') or email.split('@')[0]
+
+    if not google_id or not email:
+        raise HTTPException(status_code=401, detail='google_token_missing_claims')
+
+    try:
+        user, is_new = find_or_create_google_user(google_id, email, name)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f'db_error: {e}')
+
+    return JSONResponse(content={
+        'status': 'success',
+        'user':   _serialise(user),
+        'is_new': is_new,
+    })
+
+
+@app.patch('/api/auth/role')
+def set_role(user_id: str, role: str):
+    """Let a user update their own role (farmer ↔ buyer). Used after Google sign-in."""
+    try:
+        update_user_role(user_id, role)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f'db_error: {e}')
+    return JSONResponse(content={'status': 'success'})
 
 
 @app.delete('/api/auth/delete-account')

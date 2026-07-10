@@ -86,6 +86,8 @@ CREATE TABLE IF NOT EXISTS users (
     farm_size_ha  FLOAT,
     password_hash TEXT NOT NULL,
     hidden        BOOLEAN DEFAULT FALSE,
+    google_id     TEXT,
+    auth_provider TEXT NOT NULL DEFAULT 'email',
     created_at    TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -106,6 +108,8 @@ CREATE TABLE IF NOT EXISTS harvest_submissions (
     notes                  TEXT,
     year                   INT,
     hidden                 BOOLEAN DEFAULT FALSE,
+    consent_market         BOOLEAN DEFAULT FALSE,
+    consent_training       BOOLEAN DEFAULT FALSE,
     submitted_at           TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -168,6 +172,13 @@ CREATE TABLE IF NOT EXISTS crop_config (
     typical_area_ha  FLOAT NOT NULL DEFAULT 2.3,
     active           BOOLEAN NOT NULL DEFAULT TRUE
 );
+
+CREATE TABLE IF NOT EXISTS model_artifacts (
+    name        TEXT PRIMARY KEY,
+    data        BYTEA NOT NULL,
+    metadata    JSONB,
+    saved_at    TIMESTAMPTZ DEFAULT NOW()
+);
 """
 
 _DEFAULT_CROPS = [
@@ -191,6 +202,14 @@ def init_db():
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(_SCHEMA)
+            # Migrate existing tables: add consent columns if absent
+            for col, default in [('consent_market', 'FALSE'), ('consent_training', 'FALSE')]:
+                cur.execute(f"""
+                    ALTER TABLE harvest_submissions
+                    ADD COLUMN IF NOT EXISTS {col} BOOLEAN DEFAULT {default}
+                """)
+            cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS google_id TEXT")
+            cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_provider TEXT NOT NULL DEFAULT 'email'")
             # Seed crop config only if table is empty
             cur.execute('SELECT COUNT(*) FROM crop_config')
             if cur.fetchone()[0] == 0:
@@ -313,6 +332,90 @@ def find_user_by_email(email: str, password: str) -> dict | None:
     return dict(row) if row else None
 
 
+def find_or_create_google_user(google_id: str, email: str, name: str) -> tuple[dict, bool]:
+    """
+    Find existing user by google_id or email, or create a new Google-auth account.
+    Returns (user_dict, is_new).
+    """
+    import uuid as _uuid
+    with get_conn() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # Try by google_id first
+            cur.execute(
+                "SELECT id, name, email, phone, role, region, district, farm_size_ha "
+                "FROM users WHERE google_id = %s AND hidden = FALSE",
+                (google_id,),
+            )
+            row = cur.fetchone()
+            if row:
+                return dict(row), False
+
+            # Try by email (existing email/password account — link Google ID)
+            cur.execute(
+                "SELECT id, name, email, phone, role, region, district, farm_size_ha "
+                "FROM users WHERE LOWER(email) = LOWER(%s) AND hidden = FALSE",
+                (email,),
+            )
+            row = cur.fetchone()
+            if row:
+                cur.execute(
+                    "UPDATE users SET google_id = %s WHERE id = %s",
+                    (google_id, row['id']),
+                )
+                conn.commit()
+                return dict(row), False
+
+            # Create new Google user (random password hash — not usable for password login)
+            new_id = f'AGRI-G-{_uuid.uuid4().hex[:12].upper()}'
+            cur.execute(
+                """INSERT INTO users
+                       (id, name, email, phone, role, password_hash, google_id, auth_provider)
+                   VALUES (%s, %s, %s, '', 'farmer', %s, %s, 'google')
+                   RETURNING id, name, email, phone, role, region, district, farm_size_ha""",
+                (new_id, name, email.lower(), _hash(_uuid.uuid4().hex), google_id),
+            )
+            row = cur.fetchone()
+            conn.commit()
+    return dict(row), True
+
+
+def update_user_role(user_id: str, role: str) -> None:
+    """Update the role of an existing user."""
+    allowed = {'farmer', 'buyer'}
+    if role not in allowed:
+        raise ValueError(f'Role must be one of {allowed}')
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute('UPDATE users SET role = %s WHERE id = %s', (role, user_id))
+        conn.commit()
+
+
+def verify_user_for_reset(email: str, name: str) -> str | None:
+    """Return user id if email + full name match an active account, else None."""
+    sql = """
+        SELECT id FROM users
+        WHERE LOWER(email) = LOWER(%s)
+          AND LOWER(name)  = LOWER(%s)
+          AND hidden = FALSE
+    """
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, (email.strip(), name.strip()))
+            row = cur.fetchone()
+    return row[0] if row else None
+
+
+def update_user_password(user_id: str, new_password: str) -> None:
+    """Replace the stored password hash for the given user."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                'UPDATE users SET password_hash = %s WHERE id = %s',
+                (_hash(new_password), user_id),
+            )
+        conn.commit()
+
+
 def soft_delete_user(user_id: str) -> bool:
     """Hide the user and ALL their data. Data stays for retraining."""
     sqls = [
@@ -337,12 +440,14 @@ def insert_submission(rec: dict) -> dict:
             (farmer_id, crop, region, district, town, phone,
              area_hectares, actual_yield_kg, actual_yield_kg_per_ha,
              quantity_available_kg, price_per_kg_ghs,
-             quality_score, notes, year)
+             quality_score, notes, year,
+             consent_market, consent_training)
         VALUES
             (%(farmer_id)s, %(crop)s, %(region)s, %(district)s, %(town)s, %(phone)s,
              %(area_hectares)s, %(actual_yield_kg)s, %(actual_yield_kg_per_ha)s,
              %(quantity_available_kg)s, %(price_per_kg_ghs)s,
-             %(quality_score)s, %(notes)s, %(year)s)
+             %(quality_score)s, %(notes)s, %(year)s,
+             %(consent_market)s, %(consent_training)s)
         RETURNING id, submitted_at
     """
     with get_conn() as conn:
@@ -370,7 +475,7 @@ def hide_submission(farmer_id: str, submitted_at: str) -> bool:
 
 
 def query_actuals(crop=None, region=None, district=None, year=None) -> list[dict]:
-    conditions = ['hidden = FALSE']
+    conditions = ['hidden = FALSE', 'consent_market = TRUE']
     params: list = []
     if crop:
         conditions.append('LOWER(crop) = LOWER(%s)'); params.append(crop)
@@ -398,8 +503,8 @@ def query_my_submissions(farmer_id: str) -> list[dict]:
 
 
 def query_all_for_training() -> list[dict]:
-    """All submissions including hidden — for model retraining only."""
-    sql = "SELECT * FROM harvest_submissions ORDER BY submitted_at"
+    """Submissions where farmer consented to training use, including hidden records."""
+    sql = "SELECT * FROM harvest_submissions WHERE consent_training = TRUE ORDER BY submitted_at"
     with get_conn() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(sql)
@@ -717,6 +822,51 @@ def admin_buyer_stats() -> dict:
             cur.execute(sql)
             row = cur.fetchone()
     return dict(row) if row else {}
+
+
+# ── Model artifact persistence ─────────────────────────────────────────────────
+
+def count_submissions() -> int:
+    """Return total number of harvest submissions (including hidden) for auto-retrain gate."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute('SELECT COUNT(*) FROM harvest_submissions')
+            return int(cur.fetchone()[0])
+
+
+def save_model_artifact(name: str, data_bytes: bytes, metadata: dict = None) -> None:
+    """Upsert a trained model binary into Supabase so it survives Railway restarts."""
+    import json as _json
+    meta_json = _json.dumps(metadata) if metadata else None
+    sql = """
+        INSERT INTO model_artifacts (name, data, metadata, saved_at)
+        VALUES (%s, %s, %s::jsonb, NOW())
+        ON CONFLICT (name) DO UPDATE
+            SET data     = EXCLUDED.data,
+                metadata = EXCLUDED.metadata,
+                saved_at = NOW()
+    """
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, (name, psycopg2.Binary(data_bytes), meta_json))
+        conn.commit()
+    print(f'[DB] Saved model artifact "{name}" ({len(data_bytes)//1024} KB)')
+
+
+def load_model_artifact(name: str) -> tuple[bytes, dict] | None:
+    """Return (bytes, metadata) for the named model, or None if not found."""
+    import json as _json
+    sql = "SELECT data, metadata, saved_at FROM model_artifacts WHERE name=%s"
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, (name,))
+            row = cur.fetchone()
+    if row is None:
+        return None
+    data_bytes = bytes(row[0])
+    metadata = _json.loads(row[1]) if row[1] else {}
+    metadata['saved_at'] = row[2].isoformat() if hasattr(row[2], 'isoformat') else str(row[2])
+    return data_bytes, metadata
 
 
 # ── Migration helper ───────────────────────────────────────────────────────────
