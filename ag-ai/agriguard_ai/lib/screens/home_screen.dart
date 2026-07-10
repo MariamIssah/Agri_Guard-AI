@@ -25,17 +25,62 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   Map<String, dynamic>? _health;
+  int? _myCropCount;
+  String? _estYieldDisplay;
+  int? _uniqueFarmers;
+  int? _uniqueCrops;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _checkHealth());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _checkHealth();
+      _fetchStats();
+    });
   }
 
   Future<void> _checkHealth() async {
     try {
       final h = await context.read<BackendService>().health();
       if (mounted) setState(() => _health = h);
+    } catch (_) {}
+  }
+
+  Future<void> _fetchStats() async {
+    final user = context.read<AuthService>().currentUser;
+    if (user == null) return;
+    final isFarmer = context.read<UserSession>().isFarmer;
+    final backend = context.read<BackendService>();
+    try {
+      if (isFarmer) {
+        final res = await backend.getMySubmissions(user.id);
+        final subs = (res['submissions'] as List<dynamic>? ?? [])
+            .cast<Map<String, dynamic>>();
+        final crops = subs
+            .map((s) => s['crop']?.toString() ?? '')
+            .where((c) => c.isNotEmpty)
+            .toSet();
+        final totalKg = subs.fold<double>(
+            0, (sum, s) => sum + ((s['actual_yield_kg'] as num?)?.toDouble() ?? 0));
+        final yieldStr = totalKg == 0
+            ? '—'
+            : totalKg >= 1000
+                ? '${(totalKg / 1000).toStringAsFixed(1)}t'
+                : '${totalKg.round()}kg';
+        if (mounted) setState(() { _myCropCount = crops.length; _estYieldDisplay = yieldStr; });
+      } else {
+        final data = await backend.getHarvestActuals();
+        final entries = (data['entries'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+        final crops = entries
+            .map((e) => e['crop']?.toString() ?? '')
+            .where((c) => c.isNotEmpty)
+            .toSet();
+        final farmers = entries
+            .map((e) => e['farmer_id']?.toString() ?? '')
+            .where((f) => f.isNotEmpty)
+            .toSet();
+        if (mounted) setState(() { _uniqueCrops = crops.length; _uniqueFarmers = farmers.length; });
+      }
     } catch (_) {}
   }
 
@@ -63,7 +108,7 @@ class _HomeScreenState extends State<HomeScreen> {
         ],
       ),
       body: RefreshIndicator(
-        onRefresh: _checkHealth,
+        onRefresh: () async { await Future.wait([_checkHealth(), _fetchStats()]); },
         child: SingleChildScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
           padding: EdgeInsets.fromLTRB(20, 20, 20, MediaQuery.viewPaddingOf(context).bottom + 20),
@@ -129,7 +174,13 @@ class _HomeScreenState extends State<HomeScreen> {
               const SizedBox(height: 20),
 
               // ── Quick stats ────────────────────────────────────────────
-              _StatsRow(isFarmer: isFarmer),
+              _StatsRow(
+                isFarmer: isFarmer,
+                myCropCount: _myCropCount,
+                estYieldDisplay: _estYieldDisplay,
+                uniqueCrops: _uniqueCrops,
+                uniqueFarmers: _uniqueFarmers,
+              ),
               const SizedBox(height: 24),
 
               // ── Menu grid ──────────────────────────────────────────────
@@ -260,52 +311,60 @@ class _ApiStatusDot extends StatelessWidget {
 }
 
 class _StatsRow extends StatelessWidget {
-  const _StatsRow({required this.isFarmer});
+  const _StatsRow({
+    required this.isFarmer,
+    this.myCropCount,
+    this.estYieldDisplay,
+    this.uniqueCrops,
+    this.uniqueFarmers,
+  });
   final bool isFarmer;
+  final int? myCropCount;
+  final String? estYieldDisplay;
+  final int? uniqueCrops;
+  final int? uniqueFarmers;
 
   @override
   Widget build(BuildContext context) {
     return Row(
       children: isFarmer
           ? [
-              Expanded(child: _stat('My Crops', '—')),
+              Expanded(child: _stat(context, 'My Crops', myCropCount?.toString() ?? '—')),
               const SizedBox(width: 8),
-              Expanded(child: _stat('Est. Yield', '—')),
+              Expanded(child: _stat(context, 'Est. Yield', estYieldDisplay ?? '—')),
               const SizedBox(width: 8),
-              Expanded(child: _stat('Health', '—')),
+              Expanded(child: _stat(context, 'Health', '—')),
             ]
           : [
-              Expanded(child: _stat('Crops Listed', '25+')),
+              Expanded(child: _stat(context, 'Crops Listed', uniqueCrops?.toString() ?? '…')),
               const SizedBox(width: 8),
-              Expanded(child: _stat('Regions', '16')),
+              Expanded(child: _stat(context, 'Regions', '16')),
               const SizedBox(width: 8),
-              Expanded(child: _stat('Farmers', '—')),
+              Expanded(child: _stat(context, 'Farmers', uniqueFarmers?.toString() ?? '—')),
             ],
     );
   }
 
-  Widget _stat(String label, String value) {
-    return Builder(builder: (context) {
-      return Container(
-        padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 10),
-        decoration: BoxDecoration(
-          color: Theme.of(context).cardColor,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: Theme.of(context).dividerColor),
-        ),
-        child: Column(
-          children: [
-            Text(value,
-                style: const TextStyle(
-                    fontSize: 18, fontWeight: FontWeight.w800, color: AgriColors.forestGreen)),
-            const SizedBox(height: 4),
-            Text(label,
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.bodySmall),
-          ],
-        ),
-      );
-    });
+  Widget _stat(BuildContext context, String label, String value) {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 10),
+      decoration: BoxDecoration(
+        color: Theme.of(context).cardColor,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Theme.of(context).dividerColor),
+      ),
+      child: Column(
+        children: [
+          Text(value,
+              style: const TextStyle(
+                  fontSize: 18, fontWeight: FontWeight.w800, color: AgriColors.forestGreen)),
+          const SizedBox(height: 4),
+          Text(label,
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.bodySmall),
+        ],
+      ),
+    );
   }
 }
 
