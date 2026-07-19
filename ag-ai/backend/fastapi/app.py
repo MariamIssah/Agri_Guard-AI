@@ -865,12 +865,18 @@ def _background_retrain():
         _sys.path.insert(0, _PS_DIR)
         import compare_models as _cm
         importlib.reload(_cm)
-        baseline_m, advanced_m, _ = _cm.run_comparison(use_db=True)
-        winner = ('GradientBoostingRegressor'
-                  if advanced_m.get('r2_test', 0) >= baseline_m.get('r2_test', 0)
-                  else 'RandomForestRegressor')
-        print(f'[RETRAIN] Auto-retrain complete. Winner: {winner} '
-              f'(R²={max(baseline_m.get("r2_test",0), advanced_m.get("r2_test",0)):.4f})')
+        baseline_m, advanced_m, _, outcome = _cm.run_comparison(use_db=True)
+        if outcome.get('production_updated'):
+            print(
+                f'[RETRAIN] Production model UPDATED '
+                f'(R²: {outcome["prev_r2"]:.4f} → {outcome["new_r2"]:.4f}, '
+                f'MAE: {outcome["prev_mae"]} → {outcome["new_mae"]} kg/ha)'
+            )
+        else:
+            print(
+                f'[RETRAIN] Production model KEPT — retrain R²={outcome["new_r2"]:.4f} '
+                f'did not beat current R²={outcome["prev_r2"]:.4f}. best_model.joblib unchanged.'
+            )
     except Exception as _e:
         import traceback as _tb
         print(f'[RETRAIN] Auto-retrain failed: {_e}')
@@ -1506,7 +1512,7 @@ def admin_retrain(admin_key: str):
         raise HTTPException(status_code=500, detail=f'compare_models_not_found: {e}')
 
     try:
-        baseline_m, advanced_m, features = _cm.run_comparison(use_db=True)
+        baseline_m, advanced_m, features, outcome = _cm.run_comparison(use_db=True)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
@@ -1514,14 +1520,29 @@ def admin_retrain(admin_key: str):
         _tb.print_exc()
         raise HTTPException(status_code=500, detail=f'retrain_failed: {e}')
 
-    winner = ('GradientBoostingRegressor'
-              if advanced_m.get('r2_test', 0) >= baseline_m.get('r2_test', 0)
-              else 'RandomForestRegressor')
+    production_updated = outcome.get('production_updated', False)
+    message = (
+        f'Production model UPDATED: R² improved from {outcome["prev_r2"]} to {outcome["new_r2"]}.'
+        if production_updated
+        else f'Retrain complete but production model KEPT: new R²={outcome["new_r2"]} '
+             f'did not beat current R²={outcome["prev_r2"]}. best_model.joblib unchanged.'
+    )
 
     return JSONResponse(content={
-        'status':  'success',
-        'message': 'Both models retrained. Best model saved as best_model.joblib.',
-        'winner':  winner,
+        'status':             'success',
+        'production_updated': production_updated,
+        'message':            message,
+        'retrained_model': {
+            'model':          outcome.get('new_model_type'),
+            'r2_test':        outcome.get('new_r2'),
+            'mae_test_kg_ha': outcome.get('new_mae'),
+        },
+        'production_model': {
+            'model':          outcome.get('prev_model_type'),
+            'r2_test':        outcome.get('prev_r2'),
+            'mae_test_kg_ha': outcome.get('prev_mae'),
+            'trained_at':     outcome.get('prev_trained_at'),
+        },
         'baseline': {
             'model':          'RandomForestRegressor',
             'r2_test':        round(baseline_m.get('r2_test', 0), 4),
@@ -1534,7 +1555,6 @@ def admin_retrain(admin_key: str):
             'mae_test_kg_ha': round(advanced_m.get('mae_test', 0), 1),
             'n_train':        advanced_m.get('n_train', 0),
         },
-        'model_path': MODEL_PATH,
         'features': features,
     })
 

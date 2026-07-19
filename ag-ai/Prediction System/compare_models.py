@@ -143,6 +143,52 @@ def _bar(val, scale=40):
     return '[' + '#' * filled + '-' * (scale - filled) + ']'
 
 
+def _print_retrain_outcome(new_r2, new_mae, new_type,
+                           prev_r2, prev_mae, prev_type, prev_trained_at,
+                           updated, is_first_save):
+    """Print a clear side-by-side summary of retrain result vs production model."""
+    print('\n' + _sep())
+    print('  RETRAIN OUTCOME SUMMARY')
+    print(_sep())
+
+    # ── Retrained model block ──────────────────────────────────────────────────
+    print('\n  [ RETRAINED MODEL ]')
+    print(f'  {"Algorithm":<28} {new_type}')
+    print(f'  {"Test R²":<28} {new_r2:.4f}')
+    print(f'  {"Test MAE":<28} {new_mae:.1f} kg/ha')
+
+    # ── Production model block ─────────────────────────────────────────────────
+    print()
+    if is_first_save:
+        print('  [ PRODUCTION MODEL ] — No previous model found. First save.')
+        print(f'  {"Test R²":<28} {new_r2:.4f}  ← now set as production')
+    elif updated:
+        r2_gain  = new_r2  - prev_r2
+        mae_gain = prev_mae - new_mae if prev_mae is not None else None
+        print('  [ PRODUCTION MODEL ] — UPDATED ✓')
+        print(f'  {"Previous algorithm":<28} {prev_type}')
+        print(f'  {"Previous R² (trained at)":<28} {prev_r2:.4f}  ({prev_trained_at})')
+        print(f'  {"New R²":<28} {new_r2:.4f}  (+{r2_gain:.4f} improvement)')
+        if mae_gain is not None:
+            print(f'  {"MAE improvement":<28} {mae_gain:+.1f} kg/ha')
+        print(f'\n  → best_model.joblib has been replaced with the new model.')
+        print(f'  → Previous model backed up to best_model_backup.joblib.')
+    else:
+        r2_gap   = prev_r2  - new_r2
+        mae_gap  = new_mae  - prev_mae if prev_mae is not None else None
+        print('  [ PRODUCTION MODEL ] — KEPT (retrain did not improve) ✗')
+        print(f'  {"Current algorithm":<28} {prev_type}')
+        print(f'  {"Current R² (trained at)":<28} {prev_r2:.4f}  ({prev_trained_at})')
+        print(f'  {"Retrained R²":<28} {new_r2:.4f}  (-{r2_gap:.4f} below production)')
+        if mae_gap is not None:
+            print(f'  {"MAE difference":<28} {mae_gap:+.1f} kg/ha (retrained is worse)')
+        print(f'\n  → best_model.joblib has NOT been changed.')
+        print(f'  → Retrained model is saved only in advanced_model.joblib for inspection.')
+        print(f'  → Production model backup remains at best_model_backup.joblib.')
+
+    print('\n' + _sep())
+
+
 def run_comparison(use_db: bool = True, save_models: bool = True):
     """
     Full comparison pipeline. Trains both models on the same split.
@@ -193,22 +239,81 @@ def run_comparison(use_db: bool = True, save_models: bool = True):
               BASELINE_PARAMS, MODEL_DIR / 'baseline_model.joblib', feature_defaults)
         _save(gbm_model, encoders, gbm_metrics, features, 'GradientBoostingRegressor',
               ADVANCED_PARAMS, MODEL_DIR / 'advanced_model.joblib', feature_defaults)
-        # Save the BEST model as the active production model
+
+        # Pick the better of the two newly trained models
         best = gbm_model if gbm_metrics['r2_test'] >= rf_metrics['r2_test'] else rf_model
         best_type = ('GradientBoostingRegressor'
                      if gbm_metrics['r2_test'] >= rf_metrics['r2_test']
                      else 'RandomForestRegressor')
         best_m = gbm_metrics if gbm_metrics['r2_test'] >= rf_metrics['r2_test'] else rf_metrics
-        _save(best, encoders, best_m, features, best_type,
-              ADVANCED_PARAMS if best is gbm_model else BASELINE_PARAMS,
-              MODEL_DIR / 'best_model.joblib', feature_defaults)
+
+        best_model_path   = MODEL_DIR / 'best_model.joblib'
+        backup_model_path = MODEL_DIR / 'best_model_backup.joblib'
+
+        # Load previous production model metrics (before any overwrite)
+        prev_r2  = 0.0
+        prev_mae = None
+        prev_type = None
+        prev_trained_at = None
+        is_first_save = True
+        try:
+            prev_artifact   = joblib.load(best_model_path)
+            prev_r2         = prev_artifact.get('metrics', {}).get('r2_test', 0.0)
+            prev_mae        = prev_artifact.get('metrics', {}).get('mae_test')
+            prev_type       = prev_artifact.get('model_type', 'Unknown')
+            prev_trained_at = prev_artifact.get('trained_at', 'Unknown')
+            is_first_save   = False
+            # Back up the current production model before any possible overwrite
+            joblib.dump(prev_artifact, backup_model_path)
+        except Exception:
+            pass  # No previous model yet — first save
+
+        new_r2  = best_m['r2_test']
+        new_mae = best_m['mae_test']
+        updated = new_r2 >= prev_r2 or is_first_save
+
+        if updated:
+            _save(best, encoders, best_m, features, best_type,
+                  ADVANCED_PARAMS if best is gbm_model else BASELINE_PARAMS,
+                  best_model_path, feature_defaults)
+
+        retrain_outcome = {
+            'production_updated': updated,
+            'new_r2':             round(new_r2, 4),
+            'new_mae':            round(new_mae, 1),
+            'new_model_type':     best_type,
+            'prev_r2':            round(prev_r2, 4),
+            'prev_mae':           round(prev_mae, 1) if prev_mae is not None else None,
+            'prev_model_type':    prev_type,
+            'prev_trained_at':    prev_trained_at,
+            'is_first_save':      is_first_save,
+        }
+
+        # Always print a clear retrain outcome section
+        _print_retrain_outcome(
+            new_r2, new_mae, best_type,
+            prev_r2, prev_mae, prev_type, prev_trained_at,
+            updated, is_first_save,
+        )
         print(f'\n   Models saved to {MODEL_DIR}/')
+    else:
+        retrain_outcome = {
+            'production_updated': None,
+            'new_r2':             None,
+            'new_mae':            None,
+            'new_model_type':     None,
+            'prev_r2':            None,
+            'prev_mae':           None,
+            'prev_model_type':    None,
+            'prev_trained_at':    None,
+            'is_first_save':      None,
+        }
 
     # ── Print full report ──────────────────────────────────────────────────────
     _print_report(rf_model, gbm_model, rf_metrics, gbm_metrics, features,
                   X_test, y_test)
 
-    return rf_metrics, gbm_metrics, features
+    return rf_metrics, gbm_metrics, features, retrain_outcome
 
 
 def _save(model, encoders, metrics, features, model_type, params, path,
