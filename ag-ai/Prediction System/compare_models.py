@@ -277,6 +277,26 @@ def run_comparison(use_db: bool = True, save_models: bool = True):
                   ADVANCED_PARAMS if best is gbm_model else BASELINE_PARAMS,
                   best_model_path, feature_defaults)
 
+            # Only update comparison_report.json when the production model improves
+            winner     = 'Advanced (Gradient Boosting)' if gbm_metrics['r2_test'] >= rf_metrics['r2_test'] else 'Baseline (Random Forest)'
+            r2_imp_val = (gbm_metrics['r2_test'] - rf_metrics['r2_test']) * 100
+            mae_imp_val = rf_metrics['mae_test'] - gbm_metrics['mae_test']
+            report = {
+                'generated_at':        datetime.datetime.now().isoformat(),
+                'n_total':             len(X) ,
+                'features':            features,
+                'baseline':            {k: v for k, v in rf_metrics.items()  if k != 'y_pred'},
+                'advanced':            {k: v for k, v in gbm_metrics.items() if k != 'y_pred'},
+                'winner':              winner,
+                'r2_improvement':      round(r2_imp_val, 4),
+                'mae_improvement_kg_ha': round(mae_imp_val, 1),
+            }
+            report_path = MODEL_DIR / 'comparison_report.json'
+            MODEL_DIR.mkdir(parents=True, exist_ok=True)
+            with open(report_path, 'w') as _f:
+                json.dump(report, _f, indent=2)
+            print(f'   comparison_report.json updated (production model improved).')
+
         retrain_outcome = {
             'production_updated': updated,
             'new_r2':             round(new_r2, 4),
@@ -310,8 +330,7 @@ def run_comparison(use_db: bool = True, save_models: bool = True):
         }
 
     # ── Print full report ──────────────────────────────────────────────────────
-    _print_report(rf_model, gbm_model, rf_metrics, gbm_metrics, features,
-                  X_test, y_test)
+    _print_report(rf_model, gbm_model, rf_metrics, gbm_metrics, features)
 
     return rf_metrics, gbm_metrics, features, retrain_outcome
 
@@ -354,7 +373,7 @@ def _save(model, encoders, metrics, features, model_type, params, path,
         print(f'[WARN] Could not persist model to DB: {_e}')
 
 
-def _print_report(rf, gbm, rm, gm, features, X_test, y_test):
+def _print_report(rf, gbm, rm, gm, features):
 
     def _model_block(title, model_type, params, rationale, metrics, model_obj):
         lines = [_section(title), '']
@@ -480,22 +499,8 @@ def _print_report(rf, gbm, rm, gm, features, X_test, y_test):
     print()
     print(_sep())
 
-    # Save report to JSON
-    report = {
-        'generated_at': datetime.datetime.now().isoformat(),
-        'n_total': len(X_test) + rm['n_train'],
-        'features': features,
-        'baseline': {k: v for k, v in rm.items() if k != 'y_pred'},
-        'advanced': {k: v for k, v in gm.items() if k != 'y_pred'},
-        'winner': winner,
-        'r2_improvement': round(r2_imp, 4),
-        'mae_improvement_kg_ha': round(mae_imp, 1),
-    }
-    report_path = MODEL_DIR / 'comparison_report.json'
-    MODEL_DIR.mkdir(parents=True, exist_ok=True)
-    with open(report_path, 'w') as f:
-        json.dump(report, f, indent=2)
-    print(f'  Report saved to {report_path}')
+    # comparison_report.json is written by run_comparison after checking whether
+    # the production model was actually updated — do not write it here.
 
 
 if __name__ == '__main__':
