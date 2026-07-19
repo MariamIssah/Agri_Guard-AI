@@ -210,13 +210,22 @@ def startup():
                     disk_trained_at = _art.get('trained_at', '')
                 except Exception:
                     pass
-            if not os.path.exists(disk_path) or db_trained_at > disk_trained_at:
+            db_r2   = (meta or {}).get('r2_test', 0.0)
+            disk_r2 = 0.0
+            if os.path.exists(disk_path):
+                try:
+                    disk_r2 = (_jl.load(disk_path) if '_jl' in dir() else
+                               __import__('joblib').load(disk_path)).get('metrics', {}).get('r2_test', 0.0)
+                except Exception:
+                    pass
+            # Restore from Supabase if disk is missing OR Supabase model has better R²
+            if not os.path.exists(disk_path) or db_r2 > disk_r2:
                 os.makedirs(os.path.dirname(disk_path), exist_ok=True)
                 with open(disk_path, 'wb') as _f:
                     _f.write(model_bytes)
-                print(f'[DB] Restored best_model.joblib from Supabase (trained {db_trained_at})')
+                print(f'[DB] Restored best_model.joblib from Supabase (R²={db_r2:.4f} vs disk R²={disk_r2:.4f})')
             else:
-                print(f'[DB] On-disk model is current (trained {disk_trained_at})')
+                print(f'[DB] On-disk model kept (R²={disk_r2:.4f} >= Supabase R²={db_r2:.4f})')
     except Exception as _e:
         print(f'[WARN] Could not restore model from DB: {_e}')
 
