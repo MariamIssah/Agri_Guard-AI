@@ -1,4 +1,4 @@
-﻿"""
+"""
 Neon PostgreSQL database layer for AgriGuard AI.
 Handles users, harvest submissions, farm diary, and admin queries.
 """
@@ -503,7 +503,7 @@ def query_my_submissions(farmer_id: str) -> list[dict]:
 
 
 def query_all_for_training() -> list[dict]:
-    """Submissions where farmer consented to training use, including hidden records."""
+    """All visible submissions used for model training."""
     sql = "SELECT * FROM harvest_submissions WHERE hidden = FALSE ORDER BY submitted_at"
     with get_conn() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:

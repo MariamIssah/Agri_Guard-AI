@@ -388,9 +388,16 @@ def prepare_features(df: pd.DataFrame,
 
     feature_list = list(CORE_FEATURES)
 
+    # Always store WB feature medians so the predictor uses real values at inference
+    computed_defaults = dict(feature_defaults or {})
+    for wb_col in ['national_fertilizer_kg_ha', 'national_agri_land_km2']:
+        if wb_col in df.columns and wb_col not in computed_defaults:
+            col_vals = pd.to_numeric(df[wb_col], errors='coerce').dropna()
+            if len(col_vals) > 0:
+                computed_defaults[wb_col] = float(col_vals.median())
+
     if include_diary:
         # Compute defaults from data (for missing diary values)
-        computed_defaults = feature_defaults or {}
         for feat in DIARY_FEATURES:
             if feat not in df.columns:
                 df[feat] = None
@@ -406,7 +413,7 @@ def prepare_features(df: pd.DataFrame,
         feature_list = feature_list + DIARY_FEATURES
         feature_defaults = computed_defaults
     else:
-        feature_defaults = feature_defaults or {}
+        feature_defaults = computed_defaults
 
     X = df[feature_list].copy()
     X = X.fillna(X.median(numeric_only=True))

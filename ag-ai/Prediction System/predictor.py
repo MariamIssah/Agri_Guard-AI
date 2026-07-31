@@ -161,10 +161,19 @@ class AgriGuardPredictor:
         X = self._build_X(crop, region, area_ha, year, district, diary, weather)
         base_yield = float(self._model.predict(X)[0])
 
-        # Per-tree variance for confidence interval
+        # Confidence interval — method depends on model family
         try:
-            tree_preds = np.array([t.predict(X)[0] for t in self._model.estimators_])
-            std = float(np.std(tree_preds))
+            from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
+            if isinstance(self._model, RandomForestRegressor):
+                # RF: variance across independent trees
+                tree_preds = np.array([t.predict(X)[0] for t in self._model.estimators_])
+                std = float(np.std(tree_preds))
+            elif isinstance(self._model, GradientBoostingRegressor):
+                # GBM: variance across staged predictions (each stage adds one tree)
+                staged = np.array([p[0] for p in self._model.staged_predict(X)])
+                std = float(np.std(staged)) if len(staged) > 1 else base_yield * 0.10
+            else:
+                std = base_yield * 0.10
         except Exception:
             std = base_yield * 0.10
 

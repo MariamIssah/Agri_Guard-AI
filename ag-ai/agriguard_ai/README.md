@@ -1,8 +1,21 @@
 # AgriGuard AI — Flutter Mobile Application
 
-**APK Download:** [AgriGuard-AI.apk](../../AgriGuard-AI.apk) ← Install this on your Android phone  
-**Live API:** https://agriguard-ai-production.up.railway.app  
-**ML Pipeline Docs:** [ag-ai/README.md](../README.md)
+**APK Download:** [AgriGuard-AI.apk](../../AgriGuard-AI.apk) ← Install this on your Android phone
+**Live API:** https://agriguard-ai-production.up.railway.app
+**Full Project and ML Pipeline Docs:** [ag-ai/README.md](../README.md)
+
+---
+
+## What Is AgriGuard AI?
+
+AgriGuard AI is an agricultural intelligence mobile application built for Ghanaian smallholder farmers. It gives farmers access to four tools in one app:
+
+1. **Yield Prediction** — Enter your crop, region, farm size, and growing conditions to get a personalised yield forecast with a confidence interval, powered by a Gradient Boosting model trained on 902 real MoFA Ghana records (R²=0.9266)
+2. **Disease Diagnosis** — Upload a photo of a sick plant or describe symptoms in text to get an instant diagnosis across 38 disease conditions covering 13 Ghanaian crops, with treatment and prevention recommendations
+3. **Farm Diary** — Log daily farm activities including fertiliser applications, pest events, irrigation, and weather observations. These entries feed directly into improving your yield predictions over time
+4. **Buyer Marketplace** — Farmers list available harvest for sale; buyers view regional supply forecasts by crop and region for procurement planning
+
+The app serves three user roles: **Farmer**, **Buyer**, and **Admin**.
 
 ---
 
@@ -18,7 +31,7 @@
 5. Open **AgriGuard AI** — it connects to the live cloud API automatically
 6. Tap **Register** to create an account as a Farmer or Buyer
 
-> The app connects to `https://agriguard-ai-production.up.railway.app` by default.  
+> The app connects to `https://agriguard-ai-production.up.railway.app` by default.
 > No local server or Wi-Fi hotspot required.
 
 ---
@@ -26,44 +39,57 @@
 ## App Screens
 
 ### Farmer Flow
+
 | Screen | Description |
 |---|---|
-| Register / Login | Create farmer or buyer account |
-| Farmer Dashboard | Overview — farms, recent predictions, diary entries |
-| Farm Management | Add and view registered farms (crop, region, district, area) |
-| Yield Prediction | Input farm details → get AI yield prediction with confidence interval |
-| Crop Diary | Daily log of farm activities (planting, watering, fertilizing, pest events) |
+| Register | Create a new farmer account with crop and region details |
+| Login | Sign in with email/password or Google account |
+| Farmer Dashboard | Overview — recent predictions, farm summary, diary entries |
+| Farm Management | Add and manage registered farms (crop, region, district, area) |
+| Yield Prediction | Enter farm details → get AI yield forecast with confidence interval |
+| Prediction History | View past yield predictions for your farms |
+| Crop Diary | Daily log — fertiliser, pest events, irrigation, weather, notes |
+| Diary History | View all past diary entries by date and season |
 | Post-Harvest Submit | Submit actual harvest yield — feeds the continuous learning pipeline |
-| Disease Advisor | Enter crop symptoms → get disease diagnosis and treatment recommendation |
+| Disease Advisor | Text or image disease diagnosis with treatment recommendations |
+| Profile | View and update account information |
 
 ### Buyer Flow
-| Screen | Description |
-|---|---|
-| Buyer Dashboard | Regional supply overview |
-| Regional Forecast | 32-crop × region supply forecast for procurement planning |
-| Harvest Actuals | View farmer-submitted real yields in your region |
 
-### Disease Screens
 | Screen | Description |
 |---|---|
-| Text Symptom Tab | Describe symptoms in text → instant diagnosis (works on cloud) |
-| Image Upload Tab | Upload leaf/stem photo for CNN diagnosis (local API only) |
+| Buyer Dashboard | Regional supply overview for procurement planning |
+| Regional Forecast | Crop-by-region supply forecast based on farmer data |
+| Harvest Actuals | View farmer-submitted real yields available in your region |
+| Buyer Activity | Track your browsing and sourcing activity |
 
-### Admin
+### Disease Diagnosis Screens
+
 | Screen | Description |
 |---|---|
-| Admin Dashboard | Platform stats, user counts, model performance |
+| Text Symptom Tab | Describe symptoms in text → instant diagnosis (works fully on cloud) |
+| Image Upload Tab | Upload leaf or stem photo for CNN image diagnosis (local API only) |
+| Diagnosis Result | Disease name, confidence score, treatment steps, prevention advice |
+
+### Admin Screens
+
+| Screen | Description |
+|---|---|
+| Admin Dashboard | Platform statistics — users, submissions, model performance |
 | Model Comparison | Random Forest vs Gradient Boosting metrics side by side |
-| Retrain Model | Trigger model retrain with accumulated farmer data |
-| User Management | View all registered users |
+| Retrain Model | Trigger model retrain with accumulated farmer harvest data |
+| User Management | View, manage, and moderate all registered users |
+| Submission Log | View all farmer harvest submissions |
+| Diary Log | View all farm diary entries across the platform |
 
 ---
 
 ## How the App Connects to the API
 
-The app uses a single base URL for all API calls. This is configured in two files:
+The app uses a single base URL for all API calls, configured in two files:
 
 ### `lib/config/api_config.dart`
+
 ```dart
 static const backendBaseUrl = String.fromEnvironment(
   'AGRI_GUARD_BACKEND_URL',
@@ -72,16 +98,16 @@ static const backendBaseUrl = String.fromEnvironment(
 ```
 
 ### `lib/services/api_key_service.dart`
+
 ```dart
 static const _productionUrl = 'https://agriguard-ai-production.up.railway.app';
 
-/// Always returns the production Railway URL.
 String get effectiveBackendUrl => _productionUrl;
 ```
 
-Every API call in the app goes through `ApiKeyService.effectiveBackendUrl` — so all 13 endpoints automatically point to Railway when the APK is installed on a real device.
+Every API call goes through `ApiKeyService.effectiveBackendUrl` — so all endpoints automatically point to Railway when the APK is installed on a real device.
 
-### Example API Call (Yield Prediction)
+### Example API Call — Yield Prediction
 
 ```dart
 // lib/services/prediction_service.dart
@@ -116,37 +142,40 @@ headers: {
 
 ### Prerequisites
 
-- Flutter 3.x (`flutter --version`)
-- Android Studio or VS Code with Flutter extension
-- Android device with USB debugging OR Android emulator
+- Flutter 3.x — check with `flutter --version`
+- Android Studio or VS Code with the Flutter and Dart extensions installed
+- Android device with USB debugging enabled, OR an Android emulator
+- The API running locally (see [ag-ai/README.md](../README.md)) or use the live Railway URL
 
 ### Steps
 
 ```bash
-# From repo root
+# Navigate to the Flutter app directory
 cd Agri_Guard-AI/ag-ai/agriguard_ai
 
-# Get dependencies
+# Install Flutter dependencies
 flutter pub get
 
-# Run on connected device (uses Railway API by default)
+# Run on connected Android device or emulator (uses Railway API by default)
 flutter run
 
-# Build release APK pointing to Railway
+# Build a release APK pointing to the Railway production API
 flutter build apk --release \
   --dart-define=AGRI_GUARD_BACKEND_URL=https://agriguard-ai-production.up.railway.app
 
-# APK output path:
+# The built APK will be at:
 # build/app/outputs/flutter-apk/app-release.apk
 ```
 
-### Run with Local API (Development)
+### Run with Local API (Development Mode)
+
+If you are running the FastAPI server locally on port 8002:
 
 ```bash
-# First set up ADB tunnel so phone can reach your PC's API
+# Allow your Android phone to reach your PC's local API over USB
 adb reverse tcp:8002 tcp:8002
 
-# Run pointing to local API
+# Run the Flutter app pointing to your local API
 flutter run --dart-define=AGRI_GUARD_BACKEND_URL=http://127.0.0.1:8002
 ```
 
@@ -159,12 +188,12 @@ flutter run --dart-define=AGRI_GUARD_BACKEND_URL=http://127.0.0.1:8002
 dependencies:
   flutter:
     sdk: flutter
-  http: ^1.2.2             # REST API calls
-  provider: ^6.1.2         # State management
-  shared_preferences: ^2.3.3  # Local storage (API key settings)
-  image_picker: ^1.1.2     # Disease image upload
-  fl_chart: ^0.70.2        # Yield trend charts
-  intl: ^0.19.0            # Date formatting
+  http: ^1.2.2                 # REST API calls to FastAPI backend
+  provider: ^6.1.2             # State management across screens
+  shared_preferences: ^2.3.3   # Local storage for settings
+  image_picker: ^1.1.2         # Disease image upload from camera or gallery
+  fl_chart: ^0.70.2            # Yield trend and comparison charts
+  intl: ^0.19.0                # Date and number formatting
 ```
 
 ---
@@ -174,11 +203,11 @@ dependencies:
 ```
 agriguard_ai/lib/
 ├── config/
-│   └── api_config.dart        ← Backend URL and API key defaults
+│   └── api_config.dart              ← Backend URL configuration
 ├── models/
-│   ├── prediction_result.dart ← Yield prediction response model
-│   ├── farm.dart              ← Farm data model
-│   └── user.dart              ← User/auth model
+│   ├── prediction_result.dart       ← Yield prediction response model
+│   ├── farm.dart                    ← Farm data model
+│   └── user.dart                    ← User and authentication model
 ├── screens/
 │   ├── auth/
 │   │   ├── login_screen.dart
@@ -193,31 +222,34 @@ agriguard_ai/lib/
 │   │   ├── buyer_dashboard.dart
 │   │   ├── regional_forecast_screen.dart
 │   │   └── harvest_actuals_screen.dart
-│   ├── disease_screen.dart    ← Text + image disease diagnosis
+│   ├── disease_screen.dart          ← Text and image disease diagnosis
 │   └── admin/
 │       ├── admin_dashboard.dart
 │       ├── model_comparison_screen.dart
 │       └── retrain_screen.dart
 ├── services/
-│   ├── api_key_service.dart   ← Manages backend URL (hardcoded to Railway)
-│   ├── auth_service.dart      ← Login, register, token storage
-│   ├── prediction_service.dart← Yield prediction API calls
-│   └── disease_service.dart   ← Disease advisory API calls
-└── main.dart                  ← App entry point, route definitions
+│   ├── api_key_service.dart         ← Backend URL management
+│   ├── auth_service.dart            ← Login, register, Google OAuth, token storage
+│   ├── prediction_service.dart      ← Yield prediction API calls
+│   └── disease_service.dart         ← Disease advisory API calls
+└── main.dart                        ← App entry point and route definitions
 ```
 
 ---
 
 ## Troubleshooting
 
-**"Could not connect to server"**  
-The app is trying to reach Railway. Check your internet connection. If Railway is down, check https://railway.app/status.
+**"Could not connect to server"**
+The app is trying to reach the Railway API. Check your internet connection. If Railway is down, check https://railway.app/status. If you are in development mode, make sure your local FastAPI server is running on port 8002 and you have run `adb reverse tcp:8002 tcp:8002`.
 
-**"Image diagnosis is not available on the cloud server"**  
-This is expected. The CNN image model (PyTorch ResNet18) requires 2GB+ and is not available on the Railway free tier. Use the **Text Symptom** tab instead — it works fully on cloud.
+**"Image diagnosis is not available on the cloud server"**
+This is expected. The CNN image model (PyTorch ResNet18) requires 2GB+ of storage and is not available on the Railway free tier. Use the **Text Symptom** tab instead — it uses the rule-based advisory engine and works fully on the cloud without any additional setup.
 
-**Login not working after reinstalling**  
-If you previously had a version pointing to `http://127.0.0.1:8002`, the latest APK hardcodes the Railway URL and will work correctly. Register a new account if your previous account was on a local database only.
+**Login not working after reinstalling**
+If you previously used a version pointing to `http://127.0.0.1:8002` (local development), the latest APK hardcodes the Railway URL. You may need to register a new account if your previous account was on a local database only.
 
-**App asks for "unknown sources" permission**  
-This is normal for APK files not downloaded from the Google Play Store. Go to **Settings → Security → Install unknown apps** and allow your file manager or browser to install the APK.
+**App asks for "unknown sources" permission**
+This is normal for APK files installed outside the Google Play Store. Go to **Settings → Security → Install unknown apps** and allow your file manager or browser to install the file.
+
+**Prediction returns "model not found"**
+This means the ML model has not been trained yet on the server. Run `python "Prediction System/compare_models.py"` locally, or trigger a retrain from the Admin screen using the admin key.
