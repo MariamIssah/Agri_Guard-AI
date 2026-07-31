@@ -1,4 +1,4 @@
-# AgriGuard AI — Core ML Pipeline and API Documentation
+# Agri-Guard AI: A Machine Learning System for Crop Yield Prediction and Plant Disease Diagnosis for Ghanaian Smallholder Farmers
 
 **GitHub Repository:** https://github.com/MariamIssah/Agri_Guard-AI
 **Live API:** https://agriguard-ai-production.up.railway.app
